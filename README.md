@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.4.1**
+**Version 1.5.0**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -31,7 +31,9 @@ Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige J
 - **Konfigurations-Webseite** unter `http://<IP-Adresse>/` (Netzwerk, MQTT-Broker, Schalt-Topic, IR-GPIO, Ein/Aus-Schalter, beim S3 auch Auflösung/Qualität) – gespeichert im NVS, kein Neukompilieren nötig
 - **Bewegungserkennung** mit einstellbarer Empfindlichkeit; Lichtwechsel (z. B. IR-Licht an/aus) werden ignoriert
 - **Aufnahme auf MicroSD** bei Bewegung, Clip-Länge einstellbar (5–600 s), älteste Aufnahmen werden bei voller Karte automatisch gelöscht (abschaltbar)
+- **Daueraufnahme als Ringspeicher** per Knopf auf der Webseite (bleibt nach Neustart aktiv)
 - **Aufnahmen-Seite** zum Herunterladen und Löschen der Videos
+- **Dunkel-Meldung** und Bildhelligkeit per MQTT
 - **WLAN (nur ESP32-S3)**: mit vorhandenem WLAN verbinden oder eigenen Access Point öffnen, parallel zum Ethernet
 - Uhrzeit per NTP (Dateinamen mit Datum/Uhrzeit), ohne Internet wird die Uhrzeit vom Browser übernommen
 - Statusausgabe alle 10 s (fps, Bitrate, Clients, freier PSRAM) auf der seriellen Konsole
@@ -79,16 +81,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.4.1-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.4.1-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.4.1-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.0-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.4.1-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.4.1-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.0-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.0-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -133,9 +135,11 @@ Ethernet und WLAN laufen gleichzeitig; Webseite, RTSP-Stream und MQTT sind über
 - Karte **FAT32-formatiert** einlegen (Karten über 32 GB werden meist mit exFAT ausgeliefert und müssen umformatiert werden, z. B. mit dem *SD Card Formatter* oder `guiformat`). Die Firmware formatiert nie selbst.
 - Einstellungen auf der Webseite: *Bei Bewegung aufnehmen*, *Clip-Länge* (5–600 s), *Empfindlichkeit* (1–100), *Älteste Aufnahmen automatisch löschen*.
 - Bei Bewegung startet ein Clip mit der eingestellten Länge. Hält die Bewegung an, folgt direkt der nächste Clip.
-- Dateien liegen in `/rec` auf der Karte, Namen nach Datum/Uhrzeit (`2026-11-14_18-42-07.avi`). Ohne gültige Uhrzeit heißen sie `ohne-Uhrzeit_…avi`.
+- Dateien liegen in `/rec` auf der Karte, Namen nach Datum/Uhrzeit und Anlass: `2026-11-14_18-42-07_bewegung.avi`, `…_dauer.avi`, `…_manuell.avi`. Ohne gültige Uhrzeit heißen sie `ohne-Uhrzeit_…avi`.
 - Format: AVI – beim S3 mit MJPEG (läuft in jedem Player), beim P4 mit H.264 (VLC, Windows-Medienwiedergabe, ffmpeg).
 - *Clip jetzt aufnehmen* auf der Webseite startet eine Aufnahme sofort (zum Testen).
+- **Daueraufnahme** (Knopf *Daueraufnahme starten/beenden*): nimmt ohne Pause in Segmenten auf (Standard 300 s, einstellbar 60–3600 s). Ist die Karte voll, werden immer die ältesten Aufnahmen gelöscht (Ringspeicher) – auch wenn „automatisch löschen“ aus ist. Der Zustand bleibt nach einem Neustart erhalten. Während der Daueraufnahme starten keine zusätzlichen Bewegungsclips.
+- Vor einem Neustart über *Speichern & Neustart* wird eine laufende Aufnahme sauber abgeschlossen.
 - Die Aufnahmen-Seite `http://<IP>/aufnahmen` listet alle Videos (neueste zuerst) mit *Herunterladen* und *Löschen*.
 
 Bewegung und neue Aufnahmen werden zusätzlich per MQTT gemeldet (siehe unten).
@@ -161,9 +165,19 @@ Mit `-r` (retained) übernimmt das Board den Zustand auch nach einem Neustart; o
 | `Tuer/Kamera/Verfuegbar` | ← Board | `online` / `offline` (retained, Last Will) |
 | `Tuer/Kamera/Info` | ← Board | Version, IP, RTSP-URL (retained) |
 | `Tuer/Kamera/Bewegung` | ← Board | `1` bei erkannter Bewegung, `0` nach 5 s ohne Bewegung (retained) |
+| `Tuer/Kamera/Aufzeichnung` | ← Board | `1` solange eine Aufzeichnung läuft (Bewegung, manuell oder Daueraufnahme), sonst `0` (retained) |
+| `Tuer/Kamera/Daueraufnahme` | ← Board | `1` / `0` – Daueraufnahme (Ringspeicher) ein/aus (retained) |
 | `Tuer/Kamera/Aufnahme` | ← Board | Dateiname einer neu gestarteten Aufnahme |
+| `Tuer/Kamera/Dunkel` | ← Board | `1` = Bild zu dunkel, `0` = hell genug (retained) |
+| `Tuer/Kamera/Helligkeit` | ← Board | mittlere Bildhelligkeit in % (retained, bei Änderung ≥ 3 %, höchstens alle 10 s) |
 
-Wird über die Webseite geschaltet, schreibt das Board den neuen Wert retained auf das Schalt-Topic, damit Broker und Board übereinstimmen.
+Wird über die Webseite geschaltet, sendet das Board den neuen Zustand sofort auf `Tuer/Kamera` (retained) und `Tuer/Kamera/Status`. War MQTT in dem Moment nicht verbunden, wird der Zustand nach der Neuverbindung gemeldet, bevor der alte retained-Wert vom Broker übernommen wird.
+
+### Dunkel-Meldung
+
+`Tuer/Kamera/Dunkel` wird `1`, wenn die mittlere Bildhelligkeit unter die Schwelle fällt (Standard 15 %), und wieder `0`, wenn sie 5 Prozentpunkte darüber liegt. Ein Wechsel wird erst gemeldet, wenn er 10 s lang anhält.
+
+Ist das IR-Licht eingeschaltet, hellt es das Bild selbst auf. Damit eine Automatik wie „Dunkel = 1 → IR an“ nicht hin- und herschaltet, gilt das Bild bei eingeschaltetem IR-Licht erst ab einer höheren Helligkeit wieder als hell (Standard 60 %). Beide Schwellen lassen sich auf der Webseite einstellen.
 
 Ohne MQTT per HTTP:
 ```bash
@@ -202,6 +216,7 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 | `/aufnahmen` | Liste der Videos mit Download/Löschen |
 | `/sd/<datei>` | Video direkt herunterladen (z. B. per `curl -O`) |
 | `POST /rec/start` | Clip sofort aufnehmen |
+| `POST /rec/dauer` | Daueraufnahme `1`/`0` |
 | `POST /licht` | IR-Beleuchtung `1`/`0` |
 | `GET /api/status` | Status als JSON | Die Seite hat keinen Passwortschutz – nur im eigenen Netz betreiben.
 
@@ -262,12 +277,12 @@ Die Firmware erkennt beim Start selbst, ob die CSI-Einheit direkt YUV420 liefern
 ## Fehlersuche
 
 - **`esp_video_init fehlgeschlagen`** (P4) – Kabel/Stecker der Kamera prüfen (Kontakte richtig herum?), SCCB-Pins im menuconfig prüfen.
-- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.4.1 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
+- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.5.0 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
 - **`W5500 antwortet nicht`** (S3) – Die Firmware versucht 20, 10 und 5 MHz SPI-Takt. Antwortet der Chip bei keinem davon, ist er nicht erreichbar (Stromversorgung bzw. PoE-Modul prüfen).
 - **`esp_camera_init: ESP_ERR_NOT_FOUND`** (S3) – Kamera nicht erkannt: Flachbandkabel richtig herum eingesteckt? Board einmal stromlos machen.
 - **„Keine MicroSD-Karte“ / „kein FAT-Dateisystem“** – Karte als FAT32 formatieren, einlegen, Board neu starten.
 - **„SD-Karte zu langsam, Bild verworfen“** – schnellere Karte (Class 10 / U1 oder besser) verwenden oder beim S3 die Auflösung verringern.
-- **„Bewegungserkennung: JPEG nicht dekodierbar“** (S3) – erscheint höchstens einmal pro Minute mit Angaben zum Bildformat. Ab v1.4.1 werden auch JPEGs ohne Huffman-Tabellen (typisch für OV5640/OV2640) dekodiert.
+- **„Bewegungserkennung: JPEG nicht dekodierbar“** (S3) – erscheint höchstens einmal pro Minute mit Angaben zum Bildformat. Ab v1.5.0 werden auch JPEGs ohne Huffman-Tabellen (typisch für OV5640/OV2640) dekodiert.
 - **WLAN verbindet nicht** – Status auf der Webseite zeigt den Grund (z. B. Grund 15/202 = falsches Passwort, 201 = WLAN nicht gefunden). Der ESP32-S3 kann nur 2,4 GHz.
 - **Stream ruckelt beim S3** – Auflösung verkleinern oder JPEG-Qualitätszahl erhöhen (z. B. 15–20); über TCP abrufen.
 - **Kein Link** – Kabel/Switch prüfen; beim P4 mit anderem PHY im menuconfig „Generischer IEEE-802.3-PHY“ und PHY-Adresse `-1` (Autosuche) wählen.

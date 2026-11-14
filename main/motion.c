@@ -16,10 +16,16 @@ static int s_frames;
 static int s_hits;
 static int s_level;
 static int64_t s_last;
+static int s_bright = -1;          /* mittlere Helligkeit 0..255 */
 
 bool motion_feed(const uint8_t *gray, int w, int h, int sens)
 {
     int n = w * h;
+    uint32_t sum = 0;
+    for (int i = 0; i < n; i++) {
+        sum += gray[i];
+    }
+    s_bright = n ? (int)(sum / n) : -1;
     if (!s_bg || w != s_w || h != s_h) {
         free(s_bg);
         s_bg = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -91,4 +97,9 @@ int64_t motion_last_time(void)
 bool motion_active(void)
 {
     return s_last && esp_timer_get_time() - s_last < HOLD_US;
+}
+
+int motion_brightness_pct(void)
+{
+    return s_bright < 0 ? -1 : (s_bright * 100 + 127) / 255;
 }

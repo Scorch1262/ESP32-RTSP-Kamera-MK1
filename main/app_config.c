@@ -48,6 +48,10 @@ static void set_defaults(app_config_t *c)
     c->rec_seconds = 20;
     c->motion_sens = 50;
     strlcpy(c->ntp_server, "pool.ntp.org", sizeof(c->ntp_server));
+    c->rec_continuous = false;
+    c->rec_segment_s = 300;
+    c->dark_pct = 15;
+    c->dark_ir_pct = 60;
 #if CONFIG_APP_IR_ACTIVE_LOW
     c->ir_active_low = true;
 #endif

@@ -16,6 +16,8 @@
 #include "sdcard.h"
 #include "recorder.h"
 #include "motion.h"
+
+int app_dark_state(void);   /* main.c */
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -193,6 +195,12 @@ static esp_err_t h_root(httpd_req_t *req)
         time_t now = time(NULL);
         struct tm tm;
         localtime_r(&now, &tm);
+        char bright[64] = "noch keine Messung";
+        int bp = motion_brightness_pct();
+        int dk = app_dark_state();
+        if (bp >= 0) {
+            snprintf(bright, sizeof(bright), "%d %% &ndash; Dunkel: <b>%d</b>", bp, dk > 0 ? 1 : 0);
+        }
         char ts[32];
         if (tm.tm_year + 1900 >= 2024) {
             strftime(ts, sizeof(ts), "%d.%m.%Y %H:%M:%S", &tm);
@@ -204,13 +212,16 @@ static esp_err_t h_root(httpd_req_t *req)
                  "<tr><td>Uhrzeit</td><td>%s</td></tr>"
                  "<tr><td>MicroSD</td><td class=%s>%s</td></tr>"
                  "<tr><td>Letzte Bewegung</td><td>%s</td></tr>"
-                 "<tr><td>Aufnahme</td><td class=%s>%s %s</td></tr>"
+                 "<tr><td>Helligkeit</td><td>%s</td></tr>"
+                 "<tr><td>Aufzeichnung</td><td class=%s><b>%d</b> &ndash; %s</td></tr>"
+                 "<tr><td>Letzte Datei</td><td>%s</td></tr>"
                  "</table></div>",
                  wifi_ctrl_state(), wip ? " &ndash; Web: http://" : "", wip ? wip : "",
                  ts,
                  sdcard_ok() ? "ok" : "bad", sdi,
-                 lms,
-                 recorder_active() ? "ok" : "", recorder_active() ? "laeuft:" : (c->rec_enable ? "bereit, letzte:" : "aus, letzte:"),
+                 lms, bright,
+                 recorder_active() ? "ok" : "", recorder_active() ? 1 : 0,
+                 recorder_active() ? recorder_reason_text() : (recorder_ready() ? "bereit" : "nicht moeglich (keine SD-Karte)"),
                  recorder_last_file()[0] ? recorder_last_file() : "-");
         if (tm.tm_year + 1900 < 2024) {
             /* Uhrzeit aus dem Browser uebernehmen, wenn kein NTP-Server erreichbar ist */
@@ -224,10 +235,17 @@ static esp_err_t h_root(httpd_req_t *req)
     send_fmt(req,
         "<div class=card><h2>Aufnahmen (MicroSD)</h2>"
         "<p style='font-size:13px;color:#9aa4b1'>Bei Bewegung im Bild wird ein Clip von %d s gespeichert (%s).</p>"
+        "<p style='font-size:13px;color:#9aa4b1'>Daueraufnahme: <b class=%s>%s</b> &ndash; Segmente zu %d s, "
+        "bei voller Karte werden die aeltesten Aufnahmen ueberschrieben (Ringspeicher).</p>"
         "<a href=/aufnahmen><button>Aufnahmen anzeigen / herunterladen</button></a> "
         "<button class=sec onclick=\"fetch('/rec/start',{method:'POST'}).then(x=>x.text()).then(t=>alert(t))\">"
-        "Clip jetzt aufnehmen</button></div>",
-        c->rec_seconds, c->rec_enable ? "Bewegungsaufnahme an" : "Bewegungsaufnahme aus");
+        "Clip jetzt aufnehmen</button> "
+        "<button style='background:%s' onclick=\"fetch('/rec/dauer',{method:'POST',body:'%d'})"
+        ".then(x=>x.text()).then(t=>{alert(t);location.reload()})\">%s</button></div>",
+        c->rec_seconds, c->rec_enable ? "Bewegungsaufnahme an" : "Bewegungsaufnahme aus",
+        recorder_continuous() ? "ok" : "", recorder_continuous() ? "EIN" : "AUS", c->rec_segment_s,
+        recorder_continuous() ? "#c62828" : "#2e7d32", recorder_continuous() ? 0 : 1,
+        recorder_continuous() ? "Daueraufnahme beenden" : "Daueraufnahme starten");
 
     /* IR-Beleuchtung */
     send_fmt(req,
@@ -317,10 +335,17 @@ static esp_err_t h_root(httpd_req_t *req)
             "<input name=motion_sens type=number min=1 max=100 value=%d></div></div>"
             "<label><input type=checkbox name=rec_autodelete value=1 style='width:auto' %s> "
             "Aelteste Aufnahmen automatisch loeschen, wenn die Karte voll ist</label>"
+            "<label>Segmentlaenge der Daueraufnahme (Sekunden, 60&ndash;3600)</label>"
+            "<input name=rec_segment_s type=number min=60 max=3600 value=%d>"
             "<label>NTP-Zeitserver (fuer Dateinamen mit Datum/Uhrzeit)</label>"
-            "<input name=ntp_server value=\"%s\" maxlength=47>",
+            "<input name=ntp_server value=\"%s\" maxlength=47>"
+            "<h2 style='margin-top:18px'>Dunkel-Meldung (MQTT &lt;Topic&gt;/Dunkel)</h2>"
+            "<div class=row><div><label>Dunkel unter Helligkeit (%%)</label>"
+            "<input name=dark_pct type=number min=1 max=90 value=%d></div>"
+            "<div><label>Bei eingeschaltetem IR-Licht erst ab (%%) wieder hell</label>"
+            "<input name=dark_ir_pct type=number min=1 max=100 value=%d></div></div>",
             c->rec_enable ? "checked" : "", c->rec_seconds, c->motion_sens,
-            c->rec_autodelete ? "checked" : "", en);
+            c->rec_autodelete ? "checked" : "", c->rec_segment_s, en, c->dark_pct, c->dark_ir_pct);
     }
     httpd_resp_sendstr_chunk(req, "<button type=submit>Speichern &amp; Neustart</button></form>");
 
@@ -331,7 +356,8 @@ static esp_err_t h_root(httpd_req_t *req)
 
 static void restart_task(void *arg)
 {
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    recorder_finish(4000);    /* laufende Aufnahme sauber abschliessen, sonst ist die Datei unbrauchbar */
     esp_restart();
 }
 
@@ -414,6 +440,18 @@ static esp_err_t h_save(httpd_req_t *req)
         int n = atoi(v);
         c.motion_sens = n < 1 ? 1 : (n > 100 ? 100 : n);
     }
+    if (form_get(body, "rec_segment_s", v, sizeof(v)) && v[0]) {
+        int n = atoi(v);
+        c.rec_segment_s = n < 60 ? 60 : (n > 3600 ? 3600 : n);
+    }
+    if (form_get(body, "dark_pct", v, sizeof(v)) && v[0]) {
+        int n = atoi(v);
+        c.dark_pct = n < 1 ? 1 : (n > 90 ? 90 : n);
+    }
+    if (form_get(body, "dark_ir_pct", v, sizeof(v)) && v[0]) {
+        int n = atoi(v);
+        c.dark_ir_pct = n < 1 ? 1 : (n > 100 ? 100 : n);
+    }
     if (form_get(body, "ntp_server", v, sizeof(v))) {
         strlcpy(c.ntp_server, v, sizeof(c.ntp_server));
     }
@@ -466,13 +504,15 @@ static esp_err_t h_licht(httpd_req_t *req)
 
 static esp_err_t h_status(httpd_req_t *req)
 {
-    char out[320];
+    char out[512];
     snprintf(out, sizeof(out),
              "{\"version\":\"%s\",\"ip\":\"%s\",\"rtsp\":\"rtsp://%s:%d/%s\",\"rtsp_clients\":%d,"
-             "\"mqtt\":%s,\"ir_gpio\":%d,\"ir_licht\":%d}",
+             "\"mqtt\":%s,\"ir_gpio\":%d,\"ir_licht\":%d,\"aufzeichnung\":%d,\"daueraufnahme\":%d,"
+             "\"bewegung\":%d,\"helligkeit\":%d,\"dunkel\":%d}",
              esp_app_get_description()->version, s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
              rtsp_server_active_clients(), mqtt_ctrl_connected() ? "true" : "false",
-             g_cfg.ir_gpio, ir_light_get() ? 1 : 0);
+             g_cfg.ir_gpio, ir_light_get() ? 1 : 0, recorder_active() ? 1 : 0, recorder_continuous() ? 1 : 0,
+             motion_active() ? 1 : 0, motion_brightness_pct(), app_dark_state() > 0 ? 1 : 0);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, out);
 }
@@ -646,6 +686,17 @@ static esp_err_t h_rec_start(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t h_rec_dauer(httpd_req_t *req)
+{
+    char *body = read_body(req, 8);
+    bool on = body && body[0] == '1';
+    free(body);
+    esp_err_t err = recorder_set_continuous(on);
+    httpd_resp_sendstr(req, err == ESP_OK ? (on ? "Daueraufnahme gestartet (Ringspeicher)" : "Daueraufnahme beendet")
+                                          : "Keine Daueraufnahme moeglich (MicroSD-Karte oder Kamera fehlt)");
+    return ESP_OK;
+}
+
 static esp_err_t h_wifi_scan(httpd_req_t *req)
 {
     char *out = malloc(3072);
@@ -700,6 +751,7 @@ esp_err_t web_ui_start(void)
         { .uri = "/sd/*", .method = HTTP_GET, .handler = h_download },
         { .uri = "/sd-loeschen", .method = HTTP_POST, .handler = h_delete },
         { .uri = "/rec/start", .method = HTTP_POST, .handler = h_rec_start },
+        { .uri = "/rec/dauer", .method = HTTP_POST, .handler = h_rec_dauer },
         { .uri = "/api/wifi-scan", .method = HTTP_GET, .handler = h_wifi_scan },
         { .uri = "/api/settime", .method = HTTP_POST, .handler = h_settime },
         { .uri = "/save", .method = HTTP_POST, .handler = h_save },

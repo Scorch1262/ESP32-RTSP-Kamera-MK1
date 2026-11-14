@@ -54,6 +54,12 @@ static bool s_ready;
 /* Zustand im Video-Task */
 static volatile bool s_rec;
 static volatile bool s_want_start;
+static volatile rec_reason_t s_want_reason;
+static volatile rec_reason_t s_cur_reason;
+static volatile bool s_stop_req;
+static volatile int64_t s_block_until;
+static volatile bool s_file_open;  /* nach Fehlern (Karte voll/defekt) erst spaeter neu versuchen */
+static uint32_t s_bytes_per_s;         /* Datenrate der letzten Aufnahme (Schaetzung fuer den Platzbedarf) */
 static volatile bool s_idr_req;
 static bool s_wait_key;
 static int64_t s_end_us;
@@ -141,18 +147,24 @@ static int cmp_names(const void *a, const void *b)
 }
 
 /* Loescht die aeltesten Aufnahmen, bis genug Platz frei ist. */
-static bool ensure_space(void)
+static bool ensure_space(rec_reason_t reason)
 {
     uint64_t total, freeb;
     sdcard_space(&total, &freeb);
-    uint64_t need = MIN_FREE_BYTES;
-    if (total && need > total / 10) {
-        need = total / 10;
+    /* Platz fuer die naechste Aufnahme (Schaetzung aus der letzten Datenrate, mit Reserve) */
+    int secs = (reason == REC_CONTINUOUS) ? g_cfg.rec_segment_s : g_cfg.rec_seconds;
+    uint64_t need = (uint64_t)s_bytes_per_s * secs * 3 / 2;
+    if (need < MIN_FREE_BYTES) {
+        need = MIN_FREE_BYTES;
+    }
+    if (total && need > total / 2) {
+        need = total / 2;
     }
     if (freeb >= need) {
         return true;
     }
-    if (!g_cfg.rec_autodelete) {
+    /* Daueraufnahme ist ein Ringspeicher: aelteste Dateien werden immer geloescht */
+    if (!g_cfg.rec_autodelete && reason != REC_CONTINUOUS) {
         ESP_LOGW(TAG, "SD-Karte voll - Aufnahme uebersprungen (automatisches Loeschen ist aus)");
         return false;
     }
@@ -190,20 +202,32 @@ static bool ensure_space(void)
     return freeb >= need;
 }
 
-static void make_name(char *out, size_t len)
+static const char *reason_suffix(rec_reason_t r)
+{
+    switch (r) {
+    case REC_MOTION:     return "bewegung";
+    case REC_MANUAL:     return "manuell";
+    case REC_CONTINUOUS: return "dauer";
+    default:             return "aufnahme";
+    }
+}
+
+static void make_name(char *out, size_t len, rec_reason_t reason)
 {
     time_t now = time(NULL);
     struct tm tm;
     localtime_r(&now, &tm);
     if (tm.tm_year + 1900 >= 2024) {
-        strftime(out, len, "%Y-%m-%d_%H-%M-%S.avi", &tm);
+        char ts[24];
+        strftime(ts, sizeof(ts), "%Y-%m-%d_%H-%M-%S", &tm);
+        snprintf(out, len, "%s_%s.avi", ts, reason_suffix(reason));
     } else {
         /* Uhrzeit unbekannt (kein NTP) - fortlaufende Nummer */
         static unsigned boot_id;
         if (!boot_id) {
             boot_id = (unsigned)(esp_timer_get_time() & 0xFFFF) | 1;
         }
-        snprintf(out, len, "ohne-Uhrzeit_%04X_%03u.avi", boot_id, s_count + 1);
+        snprintf(out, len, "ohne-Uhrzeit_%04X_%03u_%s.avi", boot_id, s_count + 1, reason_suffix(reason));
     }
 }
 
@@ -230,20 +254,36 @@ static void writer_task(void *arg)
             if (f) {
                 continue;
             }
-            if (!ensure_space()) {
+            rec_reason_t reason = (rec_reason_t)m.len;
+            if (!ensure_space(reason)) {
+                s_block_until = esp_timer_get_time() + 30LL * 1000000;
                 s_rec = false;
                 continue;
             }
-            char name[48];
-            make_name(name, sizeof(name));
+            char name[64];
+            make_name(name, sizeof(name), reason);
             snprintf(path, sizeof(path), SD_REC_DIR "/%s", name);
+            /* Name schon vergeben (zwei Aufnahmen in derselben Sekunde)? -> _2, _3 ... anhaengen */
+            struct stat st;
+            char base[64];
+            strlcpy(base, name, sizeof(base));
+            char *dot = strrchr(base, '.');
+            if (dot) {
+                *dot = 0;
+            }
+            for (int k = 2; stat(path, &st) == 0 && k < 100; k++) {
+                snprintf(name, sizeof(name), "%.50s_%d.avi", base, k);
+                snprintf(path, sizeof(path), SD_REC_DIR "/%s", name);
+            }
             f = fopen(path, "wb");
             if (!f) {
                 ESP_LOGE(TAG, "Datei %s kann nicht angelegt werden", path);
+                s_block_until = esp_timer_get_time() + 30LL * 1000000;
                 s_rec = false;
                 continue;
             }
             setvbuf(f, NULL, _IOFBF, 32 * 1024);
+            s_file_open = true;
             if (!idx) {
                 idx = heap_caps_malloc(MAX_INDEX * sizeof(idx_t), MALLOC_CAP_SPIRAM);
             }
@@ -305,7 +345,11 @@ static void writer_task(void *arg)
             fwrite(hdr, 1, AVI_HDR_LEN, f);
             fclose(f);
             f = NULL;
+            s_file_open = false;
             s_count++;
+            if (dur > 2000000) {
+                s_bytes_per_s = (uint32_t)((uint64_t)movi_pos * 1000000 / dur);
+            }
             ESP_LOGI(TAG, "Aufnahme beendet: %s (%" PRIu32 " Bilder, %.1f s, %.1f fps)", s_last, frames,
                      dur / 1e6, frames ? frames * 1e6 / dur : 0);
         }
@@ -323,20 +367,30 @@ void recorder_on_frame(const uint8_t *data, size_t len, bool keyframe)
     }
     int64_t now = esp_timer_get_time();
 
-    if (s_want_start && !s_rec) {
+    /* Daueraufnahme: nach jedem Segment sofort das naechste beginnen */
+    if (g_cfg.rec_continuous && !s_rec && !s_want_start && now >= s_block_until) {
+        s_want_reason = REC_CONTINUOUS;
+        s_want_start = true;
+    }
+    if (s_want_start && !s_rec && now >= s_block_until) {
         s_want_start = false;
+        s_stop_req = false;
         s_rec = true;
+        s_cur_reason = s_want_reason;
         s_wait_key = (s_codec == RTSP_CODEC_H264);
         s_idr_req = s_wait_key;
-        s_end_us = now + (int64_t)g_cfg.rec_seconds * 1000000;
-        rec_msg_t m = { .type = MSG_START };
+        int secs = (s_cur_reason == REC_CONTINUOUS) ? g_cfg.rec_segment_s : g_cfg.rec_seconds;
+        s_end_us = now + (int64_t)secs * 1000000;
+        rec_msg_t m = { .type = MSG_START, .len = (uint32_t)s_cur_reason };
         xQueueSend(s_q, &m, portMAX_DELAY);
     }
     if (!s_rec) {
         return;
     }
-    if (now >= s_end_us) {
+    if (now >= s_end_us || s_stop_req) {
+        s_stop_req = false;
         s_rec = false;
+        s_cur_reason = REC_NONE;
         rec_msg_t m = { .type = MSG_STOP };
         xQueueSend(s_q, &m, portMAX_DELAY);
         return;
@@ -365,7 +419,8 @@ void recorder_on_frame(const uint8_t *data, size_t len, bool keyframe)
 
 void recorder_motion(void)
 {
-    if (s_ready && g_cfg.rec_enable && !s_rec) {
+    if (s_ready && g_cfg.rec_enable && !s_rec && !s_want_start) {
+        s_want_reason = REC_MOTION;
         s_want_start = true;
     }
 }
@@ -375,10 +430,77 @@ esp_err_t recorder_start_manual(void)
     if (!s_ready) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (!s_rec) {
+    if (!s_rec && !s_want_start) {
+        s_want_reason = REC_MANUAL;
         s_want_start = true;
     }
     return ESP_OK;
+}
+
+esp_err_t recorder_set_continuous(bool on)
+{
+    if (on && !s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (g_cfg.rec_continuous != on) {
+        g_cfg.rec_continuous = on;
+        config_save(&g_cfg);
+        ESP_LOGI(TAG, "Daueraufnahme %s", on ? "EIN (Ringspeicher)" : "AUS");
+    }
+    if (!on && s_rec && s_cur_reason == REC_CONTINUOUS) {
+        s_stop_req = true;                /* laufendes Segment sauber abschliessen */
+    } else if (on && s_rec && s_cur_reason != REC_CONTINUOUS) {
+        /* laufender Bewegungs-/Testclip laeuft zu Ende, danach beginnt die Daueraufnahme */
+    }
+    return ESP_OK;
+}
+
+bool recorder_continuous(void)
+{
+    return s_ready && g_cfg.rec_continuous;
+}
+
+rec_reason_t recorder_reason(void)
+{
+    return s_rec ? s_cur_reason : REC_NONE;
+}
+
+const char *recorder_reason_text(void)
+{
+    switch (recorder_reason()) {
+    case REC_MOTION:     return "Bewegung";
+    case REC_MANUAL:     return "manuell";
+    case REC_CONTINUOUS: return "Daueraufnahme";
+    default:             return "keine";
+    }
+}
+
+void recorder_finish(int timeout_ms)
+{
+    if (!s_ready) {
+        return;
+    }
+    s_block_until = INT64_MAX;                       /* keine neuen Aufnahmen mehr */
+    if (s_rec) {
+        s_stop_req = true;
+    }
+    for (int t = 0; t < timeout_ms && (s_rec || s_file_open); t += 50) {
+        if (s_rec && s_stop_req) {
+            /* Video-Task schickt MSG_STOP beim naechsten Bild; falls keins kommt, selbst senden */
+            if (t >= 500) {
+                s_rec = false;
+                rec_msg_t m = { .type = MSG_STOP };
+                xQueueSend(s_q, &m, 0);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    ESP_LOGI(TAG, "Rekorder angehalten%s", s_file_open ? " (Datei noch offen!)" : "");
+}
+
+bool recorder_ready(void)
+{
+    return s_ready;
 }
 
 bool recorder_take_idr_request(void)
@@ -419,8 +541,8 @@ esp_err_t recorder_init(uint32_t width, uint32_t height, rtsp_codec_t codec)
         return ESP_ERR_NO_MEM;
     }
     s_ready = true;
-    ESP_LOGI(TAG, "Rekorder bereit (%s, Clip %d s, Bewegung %s)",
+    ESP_LOGI(TAG, "Rekorder bereit (%s, Clip %d s, Bewegung %s, Daueraufnahme %s)",
              codec == RTSP_CODEC_H264 ? "H.264/AVI" : "MJPEG/AVI", g_cfg.rec_seconds,
-             g_cfg.rec_enable ? "an" : "aus");
+             g_cfg.rec_enable ? "an" : "aus", g_cfg.rec_continuous ? "an" : "aus");
     return ESP_OK;
 }

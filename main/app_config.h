@@ -32,6 +32,12 @@ typedef struct {
     int  rec_seconds;       /* Laenge eines Bewegungs-Clips in Sekunden */
     int  motion_sens;       /* Empfindlichkeit 1..100 */
     char ntp_server[48];
+
+    /* Ab v1.5.0 */
+    bool rec_continuous;    /* Daueraufnahme als Ringspeicher */
+    int  rec_segment_s;     /* Segmentlaenge der Daueraufnahme in Sekunden */
+    int  dark_pct;          /* Bild gilt als dunkel unter dieser Helligkeit (%) */
+    int  dark_ir_pct;       /* bei eingeschaltetem IR-Licht erst ueber dieser Helligkeit wieder "hell" (%) */
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */

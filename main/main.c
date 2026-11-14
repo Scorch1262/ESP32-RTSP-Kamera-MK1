@@ -22,6 +22,7 @@
 #include "video.h"
 #include "app_config.h"
 #include "ir_light.h"
+#include "esp_timer.h"
 #include "mqtt_ctrl.h"
 #include "web_ui.h"
 #include "status_led.h"
@@ -37,6 +38,96 @@
 static const char *TAG = "main";
 
 static bool s_cam_ok;
+static volatile int s_dark = -1;      /* -1 unbekannt, 0 hell, 1 dunkel */
+
+int app_dark_state(void)
+{
+    return s_dark;
+}
+
+/*
+ * "Zu dunkel"-Erkennung mit Hysterese und 10 s Bestaetigung.
+ * Ist das IR-Licht an, wird das Bild davon aufgehellt. Damit eine Automatik
+ * (Dunkel=1 -> IR an) nicht hin und her schaltet, gilt das Bild dann erst ab
+ * einer hoeheren Schwelle (dark_ir_pct) wieder als hell.
+ */
+static void update_dark(void)
+{
+    static int64_t pending_since;
+    static int pending = -1;
+    int b = motion_brightness_pct();
+    if (b < 0) {
+        return;
+    }
+    int want = s_dark;
+    int on_thr = g_cfg.dark_pct;
+    int off_thr = ir_light_get() ? g_cfg.dark_ir_pct : g_cfg.dark_pct + 5;
+    if (s_dark != 1 && b < on_thr) {
+        want = 1;
+    } else if (s_dark != 0 && b >= off_thr) {
+        want = 0;
+    } else if (s_dark == -1) {
+        want = (b < on_thr) ? 1 : 0;
+    }
+    if (want == s_dark) {
+        pending = -1;
+        return;
+    }
+    int64_t now = esp_timer_get_time();
+    if (pending != want) {
+        pending = want;
+        pending_since = now;
+    }
+    if (s_dark == -1 || now - pending_since >= 10LL * 1000000) {
+        s_dark = want;
+        pending = -1;
+        ESP_LOGI(TAG, "Bild %s (Helligkeit %d %%)", s_dark ? "zu dunkel" : "hell genug", b);
+        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0", true);
+    }
+}
+
+/* MQTT-Zustaende melden: bei Aenderung und nach jeder (Neu-)Verbindung */
+static void publish_states(bool force)
+{
+    static int last_rec = -1, last_cont = -1, last_mot = -1, last_dark = -2, last_bright = -100;
+    static int64_t last_bright_t;
+    int rec = recorder_active() ? 1 : 0;
+    int cont = recorder_continuous() ? 1 : 0;
+    int mot = motion_active() ? 1 : 0;
+    int b = motion_brightness_pct();
+    int64_t now = esp_timer_get_time();
+    char v[16];
+
+    if (force || rec != last_rec) {
+        mqtt_ctrl_publish("Aufzeichnung", rec ? "1" : "0", true);
+        if (rec != last_rec) {
+            ESP_LOGI(TAG, "Aufzeichnung %s%s%s", rec ? "aktiv (" : "beendet", rec ? recorder_reason_text() : "",
+                     rec ? ")" : "");
+        }
+        last_rec = rec;
+    }
+    if (force || cont != last_cont) {
+        mqtt_ctrl_publish("Daueraufnahme", cont ? "1" : "0", true);
+        last_cont = cont;
+    }
+    if (force || mot != last_mot) {
+        mqtt_ctrl_publish("Bewegung", mot ? "1" : "0", true);
+        if (mot && !last_mot) {
+            ESP_LOGI(TAG, "Bewegung erkannt");
+        }
+        last_mot = mot;
+    }
+    if (s_dark >= 0 && (force || s_dark != last_dark)) {
+        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0", true);
+        last_dark = s_dark;
+    }
+    if (b >= 0 && (force || ((b - last_bright > 2 || last_bright - b > 2) && now - last_bright_t > 10LL * 1000000))) {
+        snprintf(v, sizeof(v), "%d", b);
+        mqtt_ctrl_publish("Helligkeit", v, true);
+        last_bright = b;
+        last_bright_t = now;
+    }
+}
 
 static const char *state_text(eth_state_t st)
 {
@@ -60,21 +151,17 @@ static void status_task(void *arg)
 {
     int tick = 0;
     eth_state_t last = (eth_state_t)-1;
-    bool motion_was = false;
+    bool mqtt_was = false;
     for (;;) {
         eth_state_t st = eth_get_state();
         const char *wip = wifi_ctrl_ip();
         if (st != ETH_STATE_GOT_IP && wip) {
             st = ETH_STATE_GOT_IP;            /* ueber WLAN erreichbar */
         }
-        bool mot = motion_active();
-        if (mot != motion_was) {
-            motion_was = mot;
-            mqtt_ctrl_publish("Bewegung", mot ? "1" : "0", true);
-            if (mot) {
-                ESP_LOGI(TAG, "Bewegung erkannt");
-            }
-        }
+        update_dark();
+        bool mq = mqtt_ctrl_connected();
+        publish_states(mq && !mqtt_was);   /* nach (Neu-)Verbindung alles einmal senden */
+        mqtt_was = mq;
         bool blink = (tick & 1);
         switch (st) {
         case ETH_STATE_ERROR:   status_led_set(blink ? 40 : 0, 0, 0); break;

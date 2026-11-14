@@ -21,3 +21,6 @@ int64_t motion_last_time(void);
 
 /** true, solange in den letzten Sekunden Bewegung erkannt wurde. */
 bool motion_active(void);
+
+/** Mittlere Bildhelligkeit in Prozent (0..100), -1 = noch kein Bild ausgewertet. */
+int motion_brightness_pct(void);

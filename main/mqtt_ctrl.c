@@ -13,6 +13,7 @@ static esp_mqtt_client_handle_t s_client;
 static volatile bool s_connected;
 static char s_topic[64];
 static char s_ip[16];
+static volatile bool s_local_dirty;   /* lokal (Webseite) geschaltet, waehrend MQTT getrennt war */
 
 static void sub_topic(char *out, size_t len, const char *suffix)
 {
@@ -50,6 +51,11 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case MQTT_EVENT_CONNECTED:
         s_connected = true;
         ESP_LOGI(TAG, "Mit Broker verbunden - Schalt-Topic: %s (0/1)", s_topic);
+        if (s_local_dirty) {
+            /* Lokale Aenderung zuerst melden, sonst wuerde der alte retained-Wert sie rueckgaengig machen */
+            esp_mqtt_client_publish(s_client, s_topic, ir_light_get() ? "1" : "0", 1, 1, 1);
+            s_local_dirty = false;
+        }
         esp_mqtt_client_subscribe(s_client, s_topic, 1);
         sub_topic(t, sizeof(t), "Verfuegbar");
         esp_mqtt_client_publish(s_client, t, "online", 0, 1, 1);
@@ -89,6 +95,12 @@ void mqtt_ctrl_publish(const char *suffix, const char *payload, bool retain)
 void mqtt_ctrl_set_light(bool on)
 {
     ir_light_set(on);
+    ESP_LOGI(TAG, "IR-Licht ueber Webseite %s - %s", on ? "EIN" : "AUS",
+             s_connected ? "an MQTT gemeldet" : "wird nach MQTT-Verbindung gemeldet");
+    if (!s_connected) {
+        s_local_dirty = true;
+        return;
+    }
     if (s_connected) {
         /* Schalt-Topic retained mitziehen, damit der Broker den Zustand kennt */
         esp_mqtt_client_publish(s_client, s_topic, on ? "1" : "0", 1, 1, 1);
