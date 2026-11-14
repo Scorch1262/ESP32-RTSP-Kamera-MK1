@@ -82,7 +82,7 @@ static void update_dark(void)
         s_dark = want;
         pending = -1;
         ESP_LOGI(TAG, "Bild %s (Helligkeit %d %%)", s_dark ? "zu dunkel" : "hell genug", b);
-        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0", true);
+        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0");
     }
 }
 
@@ -99,7 +99,7 @@ static void publish_states(bool force)
     char v[16];
 
     if (force || rec != last_rec) {
-        mqtt_ctrl_publish("Aufzeichnung", rec ? "1" : "0", true);
+        mqtt_ctrl_publish("Aufzeichnung", rec ? "1" : "0");
         if (rec != last_rec) {
             ESP_LOGI(TAG, "Aufzeichnung %s%s%s", rec ? "aktiv (" : "beendet", rec ? recorder_reason_text() : "",
                      rec ? ")" : "");
@@ -107,23 +107,23 @@ static void publish_states(bool force)
         last_rec = rec;
     }
     if (force || cont != last_cont) {
-        mqtt_ctrl_publish("Daueraufnahme", cont ? "1" : "0", true);
+        mqtt_ctrl_publish("Daueraufnahme", cont ? "1" : "0");
         last_cont = cont;
     }
     if (force || mot != last_mot) {
-        mqtt_ctrl_publish("Bewegung", mot ? "1" : "0", true);
+        mqtt_ctrl_publish("Bewegung", mot ? "1" : "0");
         if (mot && !last_mot) {
             ESP_LOGI(TAG, "Bewegung erkannt");
         }
         last_mot = mot;
     }
     if (s_dark >= 0 && (force || s_dark != last_dark)) {
-        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0", true);
+        mqtt_ctrl_publish("Dunkel", s_dark ? "1" : "0");
         last_dark = s_dark;
     }
     if (b >= 0 && (force || ((b - last_bright > 2 || last_bright - b > 2) && now - last_bright_t > 10LL * 1000000))) {
         snprintf(v, sizeof(v), "%d", b);
-        mqtt_ctrl_publish("Helligkeit", v, true);
+        mqtt_ctrl_publish("Helligkeit", v);
         last_bright = b;
         last_bright_t = now;
     }

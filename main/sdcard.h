@@ -17,3 +17,6 @@ void sdcard_space(uint64_t *total, uint64_t *free_bytes);
 
 /** Kurzinfo fuer die Webseite, z. B. "SDHC 29,7 GB, 12,3 GB frei". */
 void sdcard_info(char *out, size_t len);
+
+/** Loescht ALLE Dateien und Ordner auf der Karte (legt /rec neu an). */
+esp_err_t sdcard_wipe(int *files, int *dirs, int *errors);

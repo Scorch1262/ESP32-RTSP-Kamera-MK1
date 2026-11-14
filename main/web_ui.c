@@ -600,8 +600,18 @@ static esp_err_t h_aufnahmen(httpd_req_t *req)
                  files[i].name, files[i].name);
     }
     httpd_resp_sendstr_chunk(req,
-        "</table></div><script>function del(n){if(confirm(n+' loeschen?'))"
-        "fetch('/sd-loeschen',{method:'POST',body:n}).then(()=>location.reload())}</script></body></html>");
+        "</table></div>"
+        "<div class=card style='max-width:900px;border-color:#5c2b2b'><h2 style='color:#e57373'>MicroSD-Karte leeren</h2>"
+        "<p style='font-size:13px;color:#9aa4b1'>Loescht <b>alle</b> Dateien und Ordner auf der Karte &ndash; "
+        "auch Dateien, die nicht von dieser Kamera stammen. Eine laufende Aufnahme wird vorher beendet, "
+        "eine eingeschaltete Daueraufnahme laeuft danach weiter.</p>"
+        "<button style='background:#c62828' onclick=wipe()>Alles von der SD-Karte loeschen</button></div>"
+        "<script>function del(n){if(confirm(n+' loeschen?'))"
+        "fetch('/sd-loeschen',{method:'POST',body:n}).then(()=>location.reload())}"
+        "function wipe(){if(!confirm('Wirklich ALLE Dateien auf der MicroSD-Karte loeschen?'))return;"
+        "if(prompt('Zur Bestaetigung LOESCHEN eingeben:')!=='LOESCHEN')return;"
+        "fetch('/sd-alles-loeschen',{method:'POST',body:'LOESCHEN'}).then(x=>x.text())"
+        ".then(t=>{alert(t);location.reload()})}</script></body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
     free(files);
     return ESP_OK;
@@ -678,6 +688,30 @@ static esp_err_t h_delete(httpd_req_t *req)
     return ESP_OK;
 }
 
+static esp_err_t h_wipe(httpd_req_t *req)
+{
+    char *body = read_body(req, 16);
+    bool ok = body && strcmp(body, "LOESCHEN") == 0;
+    free(body);
+    if (!ok) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bestaetigung fehlt");
+        return ESP_FAIL;
+    }
+    if (!sdcard_ok()) {
+        httpd_resp_sendstr(req, "Keine MicroSD-Karte");
+        return ESP_OK;
+    }
+    recorder_finish(4000);          /* laufende Aufnahme sauber beenden */
+    int files, dirs, errors;
+    sdcard_wipe(&files, &dirs, &errors);
+    recorder_resume();
+    char out[128];
+    snprintf(out, sizeof(out), "%d Datei(en) und %d Ordner geloescht%s", files, dirs,
+             errors ? " - einige Eintraege konnten nicht geloescht werden" : "");
+    httpd_resp_sendstr(req, out);
+    return ESP_OK;
+}
+
 static esp_err_t h_rec_start(httpd_req_t *req)
 {
     esp_err_t err = recorder_start_manual();
@@ -736,7 +770,7 @@ esp_err_t web_ui_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 16;
+    cfg.max_uri_handlers = 20;
     cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.send_wait_timeout = 30;
     httpd_handle_t srv;
@@ -750,6 +784,7 @@ esp_err_t web_ui_start(void)
         { .uri = "/aufnahmen", .method = HTTP_GET, .handler = h_aufnahmen },
         { .uri = "/sd/*", .method = HTTP_GET, .handler = h_download },
         { .uri = "/sd-loeschen", .method = HTTP_POST, .handler = h_delete },
+        { .uri = "/sd-alles-loeschen", .method = HTTP_POST, .handler = h_wipe },
         { .uri = "/rec/start", .method = HTTP_POST, .handler = h_rec_start },
         { .uri = "/rec/dauer", .method = HTTP_POST, .handler = h_rec_dauer },
         { .uri = "/api/wifi-scan", .method = HTTP_GET, .handler = h_wifi_scan },

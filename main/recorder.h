@@ -41,6 +41,9 @@ const char *recorder_reason_text(void);
 /** Beendet eine laufende Aufnahme sauber (z. B. vor einem Neustart) und wartet bis zu timeout_ms. */
 void recorder_finish(int timeout_ms);
 
+/** Erlaubt nach recorder_finish() wieder Aufnahmen (Daueraufnahme laeuft dann weiter). */
+void recorder_resume(void);
+
 /** true, wenn SD-Karte und Rekorder bereit sind. */
 bool recorder_ready(void);
 

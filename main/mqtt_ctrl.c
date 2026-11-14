@@ -3,6 +3,7 @@
 #include "mqtt_ctrl.h"
 #include "ir_light.h"
 #include "mqtt_client.h"
+#include "nvs.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
 #include "sdkconfig.h"
@@ -27,7 +28,7 @@ static void publish_state(void)
     }
     char t[96];
     sub_topic(t, sizeof(t), "Status");
-    esp_mqtt_client_publish(s_client, t, ir_light_get() ? "1" : "0", 1, 1, 1);
+    esp_mqtt_client_publish(s_client, t, ir_light_get() ? "1" : "0", 1, 1, 0);
 }
 
 static void publish_info(void)
@@ -39,7 +40,37 @@ static void publish_info(void)
              esp_app_get_description()->version, s_ip, s_ip, CONFIG_APP_RTSP_PORT,
              CONFIG_APP_RTSP_PATH, s_topic);
     sub_topic(t, sizeof(t), "Info");
-    esp_mqtt_client_publish(s_client, t, payload, 0, 1, 1);
+    esp_mqtt_client_publish(s_client, t, payload, 0, 1, 0);
+}
+
+/*
+ * Bis v1.5.0 wurden einige Meldungen "retained" (persistent) gesendet. Diese bleiben
+ * sonst dauerhaft auf dem Broker liegen. Einmalig je Geraet werden sie durch eine leere
+ * retained-Nachricht geloescht (so loescht MQTT gespeicherte Nachrichten; es wird
+ * dabei nichts Neues gespeichert).
+ */
+static void clear_old_retained(void)
+{
+    nvs_handle_t h;
+    uint8_t done = 0;
+    if (nvs_open("p4cam", NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    nvs_get_u8(h, "mqtt_clean", &done);
+    if (!done) {
+        static const char *suffixes[] = { "Status", "Verfuegbar", "Info", "Bewegung", "Aufzeichnung",
+                                          "Daueraufnahme", "Dunkel", "Helligkeit" };
+        char t[128];
+        for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++) {
+            sub_topic(t, sizeof(t), suffixes[i]);
+            esp_mqtt_client_publish(s_client, t, "", 0, 1, 1);
+        }
+        esp_mqtt_client_publish(s_client, s_topic, "", 0, 1, 1);
+        nvs_set_u8(h, "mqtt_clean", 1);
+        nvs_commit(h);
+        ESP_LOGI(TAG, "Alte persistente (retained) Meldungen auf dem Broker geloescht");
+    }
+    nvs_close(h);
 }
 
 static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -51,14 +82,15 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     case MQTT_EVENT_CONNECTED:
         s_connected = true;
         ESP_LOGI(TAG, "Mit Broker verbunden - Schalt-Topic: %s (0/1)", s_topic);
+        clear_old_retained();
         if (s_local_dirty) {
-            /* Lokale Aenderung zuerst melden, sonst wuerde der alte retained-Wert sie rueckgaengig machen */
-            esp_mqtt_client_publish(s_client, s_topic, ir_light_get() ? "1" : "0", 1, 1, 1);
+            /* Lokale Aenderung waehrend der Trennung melden */
+            esp_mqtt_client_publish(s_client, s_topic, ir_light_get() ? "1" : "0", 1, 1, 0);
             s_local_dirty = false;
         }
         esp_mqtt_client_subscribe(s_client, s_topic, 1);
         sub_topic(t, sizeof(t), "Verfuegbar");
-        esp_mqtt_client_publish(s_client, t, "online", 0, 1, 1);
+        esp_mqtt_client_publish(s_client, t, "online", 0, 1, 0);
         publish_info();
         publish_state();
         break;
@@ -68,7 +100,7 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         break;
     case MQTT_EVENT_DATA:
         if (ev->topic_len == (int)strlen(s_topic) && memcmp(ev->topic, s_topic, ev->topic_len) == 0 &&
-                ev->current_data_offset == 0 && ev->data_len <= 32) {
+                ev->current_data_offset == 0 && ev->data_len > 0 && ev->data_len <= 32) {
             if (ir_light_apply_payload(ev->data, ev->data_len)) {
                 publish_state();
             }
@@ -82,14 +114,14 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
-void mqtt_ctrl_publish(const char *suffix, const char *payload, bool retain)
+void mqtt_ctrl_publish(const char *suffix, const char *payload)
 {
     if (!s_connected) {
         return;
     }
     char t[128];
     sub_topic(t, sizeof(t), suffix);
-    esp_mqtt_client_publish(s_client, t, payload, 0, 0, retain);
+    esp_mqtt_client_publish(s_client, t, payload, 0, 0, 0);
 }
 
 void mqtt_ctrl_set_light(bool on)
@@ -102,8 +134,8 @@ void mqtt_ctrl_set_light(bool on)
         return;
     }
     if (s_connected) {
-        /* Schalt-Topic retained mitziehen, damit der Broker den Zustand kennt */
-        esp_mqtt_client_publish(s_client, s_topic, on ? "1" : "0", 1, 1, 1);
+        /* Schaltzustand auch auf dem Schalt-Topic melden (nicht persistent) */
+        esp_mqtt_client_publish(s_client, s_topic, on ? "1" : "0", 1, 1, 0);
         publish_state();
     }
 }
@@ -127,7 +159,7 @@ esp_err_t mqtt_ctrl_start(const app_config_t *cfg, const char *ip)
             .topic = lwt_topic,
             .msg = "offline",
             .qos = 1,
-            .retain = 1,
+            .retain = 0,          /* keine persistenten Nachrichten */
         },
         .session.keepalive = 30,
         .network.reconnect_timeout_ms = 5000,

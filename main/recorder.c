@@ -295,7 +295,7 @@ static void writer_task(void *arg)
             t_start = esp_timer_get_time();
             strlcpy(s_last, name, sizeof(s_last));
             ESP_LOGI(TAG, "Aufnahme gestartet: %s", name);
-            mqtt_ctrl_publish("Aufnahme", name, false);
+            mqtt_ctrl_publish("Aufnahme", name);
         } else if (m.type == MSG_FRAME) {
             if (f && idx && frames < MAX_INDEX) {
                 memcpy(chunk, "00dc", 4);
@@ -496,6 +496,12 @@ void recorder_finish(int timeout_ms)
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     ESP_LOGI(TAG, "Rekorder angehalten%s", s_file_open ? " (Datei noch offen!)" : "");
+    s_last[0] = 0;
+}
+
+void recorder_resume(void)
+{
+    s_block_until = 0;
 }
 
 bool recorder_ready(void)

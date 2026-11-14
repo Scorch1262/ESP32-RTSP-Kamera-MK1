@@ -6,6 +6,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <dirent.h>
+#include <unistd.h>
 #include "sdcard.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
@@ -90,4 +92,48 @@ void sdcard_info(char *out, size_t len)
     uint64_t t, f;
     sdcard_space(&t, &f);
     snprintf(out, len, "%.1f GB, %.1f GB frei", t / 1e9, f / 1e9);
+}
+
+/* Loescht rekursiv alle Dateien und Ordner unterhalb von dir */
+static void wipe_dir(const char *dir, int *files, int *dirs, int *errors)
+{
+    DIR *d = opendir(dir);
+    if (!d) {
+        return;
+    }
+    struct dirent *e;
+    char path[300];
+    while ((e = readdir(d)) != NULL) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) {
+            continue;
+        }
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        if (e->d_type == DT_DIR) {
+            wipe_dir(path, files, dirs, errors);
+            if (rmdir(path) == 0) {
+                (*dirs)++;
+            } else {
+                (*errors)++;
+            }
+        } else {
+            if (unlink(path) == 0) {
+                (*files)++;
+            } else {
+                (*errors)++;
+            }
+        }
+    }
+    closedir(d);
+}
+
+esp_err_t sdcard_wipe(int *files, int *dirs, int *errors)
+{
+    *files = *dirs = *errors = 0;
+    if (!s_card) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    wipe_dir(SD_MOUNT, files, dirs, errors);
+    mkdir(SD_REC_DIR, 0775);
+    ESP_LOGW(TAG, "MicroSD-Karte geleert: %d Dateien, %d Ordner geloescht, %d Fehler", *files, *dirs, *errors);
+    return *errors ? ESP_FAIL : ESP_OK;
 }
