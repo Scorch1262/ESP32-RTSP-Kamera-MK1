@@ -34,8 +34,11 @@ static uint8_t *s_buf[CAM_BUF_COUNT];
 static size_t s_buf_len[CAM_BUF_COUNT];
 static camera_info_t s_info;
 
-/* Nur im PPA-Modus */
+/* Nur im PPA-Modus (Farbwandlung und/oder Drehung) */
 static ppa_client_handle_t s_ppa;
+static uint32_t s_src_w, s_src_h;              /* Groesse des Kamerabildes (vor der Drehung) */
+static ppa_srm_color_mode_t s_src_cm;          /* Format des Kamerabildes */
+static ppa_srm_rotation_angle_t s_ppa_angle;   /* PPA dreht gegen den Uhrzeigersinn */
 static uint8_t *s_yuv;
 static size_t s_yuv_alloc;
 
@@ -76,7 +79,7 @@ static esp_err_t try_set_format(uint32_t w, uint32_t h, uint32_t pixfmt)
     return (fmt.fmt.pix.pixelformat == pixfmt) ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t camera_init(camera_info_t *info)
+esp_err_t camera_init(camera_info_t *info, int rotation)
 {
     char fcc[5];
 
@@ -100,14 +103,28 @@ esp_err_t camera_init(camera_info_t *info)
     ESP_RETURN_ON_FALSE((w % 16) == 0 && (h % 16) == 0, ESP_ERR_NOT_SUPPORTED, TAG,
                         "H.264-HW-Encoder braucht Breite/Hoehe als Vielfaches von 16");
 
-    if (try_set_format(w, h, V4L2_PIX_FMT_YUV420) == ESP_OK) {
-        s_info.zero_copy = true;
+    rotation = ((rotation % 360) + 360) % 360;
+    bool direct_yuv = (try_set_format(w, h, V4L2_PIX_FMT_YUV420) == ESP_OK);
+    if (!direct_yuv) {
+        ESP_RETURN_ON_ERROR(try_set_format(w, h, V4L2_PIX_FMT_RGB565), TAG, "Weder YUV420 noch RGB565 einstellbar");
+    }
+    s_src_w = w;
+    s_src_h = h;
+    s_src_cm = direct_yuv ? PPA_SRM_COLOR_MODE_YUV420 : PPA_SRM_COLOR_MODE_RGB565;
+    /* Drehung im Uhrzeigersinn -> PPA-Winkel gegen den Uhrzeigersinn */
+    s_ppa_angle = rotation == 90  ? PPA_SRM_ROTATION_ANGLE_270 :
+                  rotation == 180 ? PPA_SRM_ROTATION_ANGLE_180 :
+                  rotation == 270 ? PPA_SRM_ROTATION_ANGLE_90  : PPA_SRM_ROTATION_ANGLE_0;
+
+    s_info.zero_copy = direct_yuv && rotation == 0;
+    if (s_info.zero_copy) {
         ESP_LOGI(TAG, "CSI liefert direkt YUV420 (zero copy)");
     } else {
-        ESP_RETURN_ON_ERROR(try_set_format(w, h, V4L2_PIX_FMT_RGB565), TAG, "Weder YUV420 noch RGB565 einstellbar");
-        s_info.zero_copy = false;
-        ESP_LOGI(TAG, "CSI liefert RGB565 -> Wandlung nach YUV420 per PPA");
-
+        ESP_LOGI(TAG, "PPA: %s -> YUV420%s", direct_yuv ? "YUV420" : "RGB565",
+                 rotation ? ", Drehung" : "");
+        if (rotation) {
+            ESP_LOGI(TAG, "Bild wird um %d Grad im Uhrzeigersinn gedreht", rotation);
+        }
         ppa_client_config_t pcfg = {
             .oper_type = PPA_OPERATION_SRM,
             .max_pending_trans_num = 1,
@@ -115,8 +132,9 @@ esp_err_t camera_init(camera_info_t *info)
         ESP_RETURN_ON_ERROR(ppa_register_client(&pcfg, &s_ppa), TAG, "PPA-Client");
     }
 
-    s_info.width = w;
-    s_info.height = h;
+    bool swap = (rotation == 90 || rotation == 270);
+    s_info.width = swap ? h : w;
+    s_info.height = swap ? w : h;
     s_info.yuv_size = w * h * 3 / 2;
 
     if (!s_info.zero_copy) {
@@ -169,14 +187,16 @@ esp_err_t camera_get_frame(camera_frame_t *frame)
         return ESP_OK;
     }
 
-    /* RGB565 -> YUV420 (O_UYY_E_VYY) per PPA */
+    /* RGB565/YUV420 -> YUV420 (O_UYY_E_VYY) per PPA, ggf. gedreht */
     ppa_srm_oper_config_t srm = {0};
     srm.in.buffer = s_buf[buf.index];
-    srm.in.pic_w = s_info.width;
-    srm.in.pic_h = s_info.height;
-    srm.in.block_w = s_info.width;
-    srm.in.block_h = s_info.height;
-    srm.in.srm_cm = PPA_SRM_COLOR_MODE_RGB565;
+    srm.in.pic_w = s_src_w;
+    srm.in.pic_h = s_src_h;
+    srm.in.block_w = s_src_w;
+    srm.in.block_h = s_src_h;
+    srm.in.srm_cm = s_src_cm;
+    srm.in.yuv_range = PPA_COLOR_RANGE_LIMIT;
+    srm.in.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
     srm.out.buffer = s_yuv;
     srm.out.buffer_size = s_yuv_alloc;
     srm.out.pic_w = s_info.width;
@@ -184,7 +204,7 @@ esp_err_t camera_get_frame(camera_frame_t *frame)
     srm.out.srm_cm = PPA_SRM_COLOR_MODE_YUV420;
     srm.out.yuv_range = PPA_COLOR_RANGE_LIMIT;
     srm.out.yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601;
-    srm.rotation_angle = PPA_SRM_ROTATION_ANGLE_0;
+    srm.rotation_angle = s_ppa_angle;
     srm.scale_x = 1.0f;
     srm.scale_y = 1.0f;
     srm.mode = PPA_TRANS_MODE_BLOCKING;

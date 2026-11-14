@@ -38,6 +38,9 @@ typedef struct {
     int  rec_segment_s;     /* Segmentlaenge der Daueraufnahme in Sekunden */
     int  dark_pct;          /* Bild gilt als dunkel unter dieser Helligkeit (%) */
     int  dark_ir_pct;       /* bei eingeschaltetem IR-Licht erst ueber dieser Helligkeit wieder "hell" (%) */
+
+    /* Ab v1.7.0 */
+    int  video_rotation;    /* Bilddrehung im Uhrzeigersinn: 0, 90, 180, 270 */
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */

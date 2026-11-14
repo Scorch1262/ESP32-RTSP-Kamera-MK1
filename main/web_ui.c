@@ -294,6 +294,29 @@ static esp_err_t h_root(httpd_req_t *req)
     send_fmt(req, "</select><label>JPEG-Qualitaet (4 = beste, 40 = kleinste Datenmenge)</label>"
                   "<input name=cam_quality type=number min=4 max=40 value=%d>", c->cam_quality);
 #endif
+    /* Bilddrehung */
+    {
+        int r = c->video_rotation;
+        send_fmt(req,
+            "<h2 style='margin-top:18px'>Videobild</h2>"
+            "<label>Bild drehen (im Uhrzeigersinn) &ndash; gilt fuer Stream, Aufnahmen und Bewegungserkennung</label>"
+            "<select name=video_rotation>"
+            "<option value=0 %s>0&deg; (nicht gedreht)</option>"
+            "<option value=90 %s>90&deg; rechts</option>"
+            "<option value=180 %s>180&deg; (auf dem Kopf)</option>"
+            "<option value=270 %s>270&deg; rechts (= 90&deg; links)</option></select>"
+#if CONFIG_IDF_TARGET_ESP32S3
+            "<p style='font-size:12px;color:#9aa4b1'>ESP32-S3: 180&deg; dreht der Kamerasensor ohne Verlust. "
+            "Bei 90&deg;/270&deg; wird jedes Bild per Software neu kodiert &ndash; dann max. 640&times;480 "
+            "(Hochformat 480&times;640) und weniger Bilder pro Sekunde.</p>"
+#else
+            "<p style='font-size:12px;color:#9aa4b1'>ESP32-P4: Drehung verlustfrei per Grafikbaustein (PPA); "
+            "bei 90&deg;/270&deg; liefert der Stream 720&times;1280 (Hochformat).</p>"
+#endif
+            ,
+            r == 0 ? "selected" : "", r == 90 ? "selected" : "", r == 180 ? "selected" : "", r == 270 ? "selected" : "");
+    }
+
     /* WLAN */
     if (wifi_ctrl_available()) {
         char es[80];
@@ -429,6 +452,10 @@ static esp_err_t h_save(httpd_req_t *req)
         if (form_get(body, "wifi_pass_clear", v, sizeof(v))) {
             c.wifi_pass[0] = 0;
         }
+    }
+    if (form_get(body, "video_rotation", v, sizeof(v)) && v[0]) {
+        int r = atoi(v);
+        c.video_rotation = (r == 90 || r == 180 || r == 270) ? r : 0;
     }
     c.rec_enable = form_get(body, "rec_enable", v, sizeof(v));
     c.rec_autodelete = form_get(body, "rec_autodelete", v, sizeof(v));

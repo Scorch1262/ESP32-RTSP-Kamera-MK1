@@ -19,6 +19,7 @@
 #include "recorder.h"
 #include "motion.h"
 #include "jpeg_decoder.h"
+#include "img_converters.h"
 #include "freertos/semphr.h"
 #include "sdkconfig.h"
 
@@ -36,6 +37,33 @@ static const char *TAG = "video";
 #endif
 
 static int s_fps_target;
+
+/* Drehung: 180 Grad per Sensor (kostenlos), 90/270 Grad per Software:
+   Kamera liefert RGB565, das Bild wird gedreht und neu als JPEG kodiert. */
+#define SOFT_ROT_MAX_PIXELS (640 * 480)
+static int s_rot;
+static bool s_soft_rot;
+static uint16_t *s_rotbuf;
+static int s_soft_q;
+
+/* Dreht ein RGB565-Bild um 90 (cw = true) bzw. 270 Grad im Uhrzeigersinn, in 16x16-Bloecken */
+static void rotate_rgb565(const uint16_t *src, uint16_t *dst, int w, int h, bool cw)
+{
+    for (int by = 0; by < h; by += 16) {
+        for (int bx = 0; bx < w; bx += 16) {
+            int ye = by + 16 < h ? by + 16 : h;
+            int xe = bx + 16 < w ? bx + 16 : w;
+            for (int y = by; y < ye; y++) {
+                const uint16_t *row = src + y * w;
+                for (int x = bx; x < xe; x++) {
+                    int dx = cw ? (h - 1 - y) : y;
+                    int dy = cw ? x : (w - 1 - x);
+                    dst[dy * h + dx] = row[x];
+                }
+            }
+        }
+    }
+}
 
 /* Bewegungserkennung: Kopie eines JPEG-Bildes, im eigenen Task auf 1/8 dekodiert */
 #define MOTION_INTERVAL_US  (300 * 1000)
@@ -144,22 +172,42 @@ static void stream_task(void *arg)
         }
         int64_t now_us = esp_timer_get_time();
         uint32_t ts90k = (uint32_t)((now_us * 9) / 100);
-        if (rtsp_server_active_clients() > 0) {
-            rtsp_server_push_jpeg(fb->buf, fb->len, ts90k);
+
+        const uint8_t *jpg = fb->buf;
+        size_t jlen = fb->len;
+        uint8_t *soft_jpg = NULL;
+        if (s_soft_rot) {
+            int w = fb->width, h = fb->height;
+            rotate_rgb565((const uint16_t *)fb->buf, s_rotbuf, w, h, s_rot == 90);
+            esp_camera_fb_return(fb);
+            fb = NULL;
+            if (!fmt2jpg((uint8_t *)s_rotbuf, (size_t)w * h * 2, h, w, PIXFORMAT_RGB565, s_soft_q,
+                         &soft_jpg, &jlen)) {
+                ESP_LOGW(TAG, "JPEG-Kodierung des gedrehten Bildes fehlgeschlagen");
+                continue;
+            }
+            jpg = soft_jpg;
         }
-        recorder_on_frame(fb->buf, fb->len, true);
+
+        if (rtsp_server_active_clients() > 0) {
+            rtsp_server_push_jpeg(jpg, jlen, ts90k);
+        }
+        recorder_on_frame(jpg, jlen, true);
 
         static int64_t last_motion;
-        if (s_mjpeg && !s_motion_busy && fb->len <= MOTION_JPEG_MAX && now_us - last_motion >= MOTION_INTERVAL_US) {
+        if (s_mjpeg && !s_motion_busy && jlen <= MOTION_JPEG_MAX && now_us - last_motion >= MOTION_INTERVAL_US) {
             last_motion = now_us;
-            memcpy(s_mjpeg, fb->buf, fb->len);
-            s_mjpeg_len = fb->len;
+            memcpy(s_mjpeg, jpg, jlen);
+            s_mjpeg_len = jlen;
             s_motion_busy = true;
             xSemaphoreGive(s_motion_sem);
         }
         stat_frames++;
-        stat_bytes += fb->len;
-        esp_camera_fb_return(fb);
+        stat_bytes += jlen;
+        if (fb) {
+            esp_camera_fb_return(fb);
+        }
+        free(soft_jpg);
 
         int64_t now = esp_timer_get_time();
         if (now - stat_t0 >= 10 * 1000000LL) {
@@ -178,6 +226,12 @@ esp_err_t video_init(video_info_t *info)
 {
     const fs_entry_t *fs = find_size(g_cfg.cam_width);
     int q = g_cfg.cam_quality;
+    s_rot = ((g_cfg.video_rotation % 360) + 360) % 360;
+    s_soft_rot = (s_rot == 90 || s_rot == 270);
+    if (s_soft_rot && (int)fs->w * fs->h > SOFT_ROT_MAX_PIXELS) {
+        ESP_LOGW(TAG, "Drehung um %d Grad: Software-Kodierung, Aufloesung auf 640x480 begrenzt", s_rot);
+        fs = find_size(640);
+    }
     if (q < 4 || q > 40) {
         q = CONFIG_APP_S3_JPEG_QUALITY;
     }
@@ -202,10 +256,10 @@ esp_err_t video_init(video_info_t *info)
         .xclk_freq_hz = CONFIG_APP_S3_CAM_XCLK_HZ,
         .ledc_timer = LEDC_TIMER_0,
         .ledc_channel = LEDC_CHANNEL_0,
-        .pixel_format = PIXFORMAT_JPEG,
+        .pixel_format = s_soft_rot ? PIXFORMAT_RGB565 : PIXFORMAT_JPEG,
         .frame_size = fs->fs,
         .jpeg_quality = q,
-        .fb_count = 3,
+        .fb_count = s_soft_rot ? 2 : 3,
         .fb_location = CAMERA_FB_IN_PSRAM,
         .grab_mode = CAMERA_GRAB_LATEST,
     };
@@ -223,9 +277,11 @@ esp_err_t video_init(video_info_t *info)
         if (si) {
             name = si->name;
         }
-        if (s->id.PID == OV5640_PID) {
-            s->set_vflip(s, CAM_VFLIP);
-            s->set_hmirror(s, CAM_HMIRROR);
+        /* 180 Grad = vertikal kippen + horizontal spiegeln (im Sensor, ohne Rechenaufwand) */
+        int flip = (s_rot == 180) ? 1 : 0;
+        if (s->id.PID == OV5640_PID || flip) {
+            s->set_vflip(s, CAM_VFLIP ^ flip);
+            s->set_hmirror(s, CAM_HMIRROR ^ flip);
         }
     }
 
@@ -238,9 +294,28 @@ esp_err_t video_init(video_info_t *info)
         esp_camera_fb_return(fb);
     }
 
-    static char desc[64];
-    snprintf(desc, sizeof(desc), "%s DVP, MJPEG (Qualitaet %d)", name, q);
-    s_fps_target = (w * h > 1280 * 720) ? 8 : 15;
+    if (s_soft_rot) {
+        s_rotbuf = heap_caps_malloc((size_t)w * h * 2, MALLOC_CAP_SPIRAM);
+        if (!s_rotbuf) {
+            ESP_LOGE(TAG, "Kein Speicher fuer die Bilddrehung");
+            return ESP_ERR_NO_MEM;
+        }
+        /* Sensor-Skala 4..40 (klein = gut) auf Encoder-Skala 0..100 (gross = gut) */
+        s_soft_q = 100 - q * 2;
+        s_soft_q = s_soft_q < 30 ? 30 : (s_soft_q > 95 ? 95 : s_soft_q);
+        uint32_t t = w;
+        w = h;
+        h = t;
+    }
+
+    static char desc[80];
+    if (s_rot) {
+        snprintf(desc, sizeof(desc), "%s DVP, MJPEG, %d Grad gedreht%s", name, s_rot,
+                 s_soft_rot ? " (Software)" : "");
+    } else {
+        snprintf(desc, sizeof(desc), "%s DVP, MJPEG (Qualitaet %d)", name, q);
+    }
+    s_fps_target = s_soft_rot ? 8 : ((w * h > 1280 * 720) ? 8 : 15);
 
     info->width = w;
     info->height = h;

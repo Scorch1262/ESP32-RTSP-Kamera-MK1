@@ -2,6 +2,7 @@
  * Videopfad ESP32-P4: OV5640 (MIPI-CSI) -> YUV420 -> H.264-Hardware-Encoder -> RTSP
  */
 #include <inttypes.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -144,7 +145,7 @@ static void stream_task(void *arg)
 
 esp_err_t video_init(video_info_t *info)
 {
-    esp_err_t err = camera_init(&s_cam);
+    esp_err_t err = camera_init(&s_cam, g_cfg.video_rotation);
     if (err != ESP_OK) {
         return err;
     }
@@ -152,7 +153,11 @@ esp_err_t video_init(video_info_t *info)
     info->height = s_cam.height;
     info->fps = CONFIG_APP_CAM_FPS;
     info->codec = RTSP_CODEC_H264;
-    info->desc = "OV5640 MIPI-CSI, H.264 (Hardware)";
+    static char desc[64];
+    snprintf(desc, sizeof(desc), "OV5640 MIPI-CSI, H.264 (Hardware)%s",
+             g_cfg.video_rotation == 90 ? ", 90 Grad gedreht" : g_cfg.video_rotation == 180 ? ", 180 Grad gedreht" :
+             g_cfg.video_rotation == 270 ? ", 270 Grad gedreht" : "");
+    info->desc = desc;
     return ESP_OK;
 }
 

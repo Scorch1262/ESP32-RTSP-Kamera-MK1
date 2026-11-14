@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.6.0**
+**Version 1.7.0**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -34,6 +34,7 @@ Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige J
 - **Daueraufnahme als Ringspeicher** per Knopf auf der Webseite (bleibt nach Neustart aktiv)
 - **Aufnahmen-Seite** zum Herunterladen und Löschen der Videos
 - **Dunkel-Meldung** und Bildhelligkeit per MQTT
+- **Bild drehen** in 90°-Schritten über die Webseite (Stream, Aufnahmen und Bewegungserkennung)
 - **WLAN (nur ESP32-S3)**: mit vorhandenem WLAN verbinden oder eigenen Access Point öffnen, parallel zum Ethernet
 - Uhrzeit per NTP (Dateinamen mit Datum/Uhrzeit), ohne Internet wird die Uhrzeit vom Browser übernommen
 - Statusausgabe alle 10 s (fps, Bitrate, Clients, freier PSRAM) auf der seriellen Konsole
@@ -81,16 +82,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.6.0-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.6.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.6.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.6.0-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.6.0-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -115,6 +116,15 @@ esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.6.0-e
 | gelb blinkend | Link OK, warte auf IP-Adresse (DHCP) |
 | grün | verbunden, Stream läuft |
 | lila | verbunden, aber Kamera nicht erkannt |
+
+## Bild drehen
+
+Auf der Webseite unter **Einstellungen → Videobild** lässt sich das Bild in 90°-Schritten im Uhrzeigersinn drehen (0°, 90°, 180°, 270°). Nach **Speichern & Neustart** gilt die Drehung für den RTSP-Stream, die Aufnahmen auf der SD-Karte und die Bewegungserkennung.
+
+| Board | 180° | 90° / 270° |
+|---|---|---|
+| ESP32-P4-ETH | verlustfrei per Grafikbaustein (PPA) | verlustfrei per PPA, Stream im Hochformat 720×1280 |
+| ESP32-S3-ETH | verlustfrei im Kamerasensor (Spiegeln + Kippen) | per Software: Bild wird neu kodiert, max. 640×480 (Hochformat 480×640), ca. 8 Bilder/s |
 
 ## WLAN (nur ESP32-S3-ETH)
 
