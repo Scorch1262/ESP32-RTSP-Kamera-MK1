@@ -355,6 +355,9 @@ bool rtsp_server_take_idr_request(void)
 int rtsp_server_active_clients(void)
 {
     int cnt = 0;
+    if (!s_clients) {
+        return 0;
+    }
     for (int i = 0; i < s_cfg.max_clients; i++) {
         if (s_clients[i].used && s_clients[i].playing) {
             cnt++;

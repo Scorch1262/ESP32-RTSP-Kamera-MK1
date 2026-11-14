@@ -132,4 +132,21 @@ menu "P4-ETH-RTSP-Cam-MK1"
             default 1400
     endmenu
 
+    menu "MQTT / IR (Startwerte, spaeter per Webseite aenderbar)"
+        config APP_MQTT_URI
+            string "MQTT-Broker-URI (leer = aus)"
+            default ""
+            help
+                z. B. mqtt://192.168.1.10:1883
+
+        config APP_MQTT_TOPIC
+            string "Basis-Topic"
+            default "p4cam"
+
+        config APP_IR_GPIO
+            int "GPIO der IR-LED (-1 = aus)"
+            range -1 54
+            default 20
+    endmenu
+
 endmenu

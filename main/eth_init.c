@@ -57,7 +57,7 @@ static void got_ip_handler(void *arg, esp_event_base_t base, int32_t id, void *d
     xEventGroupSetBits(s_evt, ETH_GOT_IP_BIT);
 }
 
-esp_err_t eth_start(void)
+esp_err_t eth_start(const app_config_t *cfg)
 {
     s_evt = xEventGroupCreate();
     ESP_RETURN_ON_FALSE(s_evt, ESP_ERR_NO_MEM, TAG, "EventGroup");
@@ -65,16 +65,21 @@ esp_err_t eth_start(void)
     esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
     s_netif = esp_netif_new(&netif_cfg);
     ESP_RETURN_ON_FALSE(s_netif, ESP_FAIL, TAG, "esp_netif_new");
-    esp_netif_set_hostname(s_netif, CONFIG_APP_HOSTNAME);
+    esp_netif_set_hostname(s_netif, cfg->hostname);
 
-#if CONFIG_APP_USE_STATIC_IP
-    esp_netif_dhcpc_stop(s_netif);
-    esp_netif_ip_info_t ip = {0};
-    ip.ip.addr = ipaddr_addr(CONFIG_APP_STATIC_IP);
-    ip.netmask.addr = ipaddr_addr(CONFIG_APP_STATIC_NETMASK);
-    ip.gw.addr = ipaddr_addr(CONFIG_APP_STATIC_GW);
-    ESP_RETURN_ON_ERROR(esp_netif_set_ip_info(s_netif, &ip), TAG, "statische IP");
-#endif
+    if (cfg->static_ip) {
+        esp_netif_dhcpc_stop(s_netif);
+        esp_netif_ip_info_t ip = {0};
+        ip.ip.addr = ipaddr_addr(cfg->ip);
+        ip.netmask.addr = ipaddr_addr(cfg->netmask);
+        ip.gw.addr = ipaddr_addr(cfg->gateway);
+        ESP_RETURN_ON_ERROR(esp_netif_set_ip_info(s_netif, &ip), TAG, "statische IP");
+        if (ip.gw.addr) {
+            esp_netif_dns_info_t dns = { .ip.u_addr.ip4.addr = ip.gw.addr, .ip.type = ESP_IPADDR_TYPE_V4 };
+            esp_netif_set_dns_info(s_netif, ESP_NETIF_DNS_MAIN, &dns);
+        }
+        ESP_LOGI(TAG, "Statische IP %s", cfg->ip);
+    }
 
     /* MAC: interne EMAC des ESP32-P4. Die Defaults entsprechen der Waveshare-Belegung
        (TXD0=34, TXD1=35, TX_EN=49, RXD0=29, RXD1=30, CRS_DV=28, REF_CLK-Eingang=50). */

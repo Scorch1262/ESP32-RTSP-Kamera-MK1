@@ -22,6 +22,10 @@
 #include "eth_init.h"
 #include "camera.h"
 #include "rtsp_server.h"
+#include "app_config.h"
+#include "ir_tx.h"
+#include "mqtt_ctrl.h"
+#include "web_ui.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "main";
@@ -121,35 +125,52 @@ void app_main(void)
     const esp_app_desc_t *app = esp_app_get_description();
     ESP_LOGI(TAG, "P4-ETH-RTSP-Cam-MK1 v%s", app->version);
 
+    config_load(&g_cfg);
+
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(eth_start());
+    ESP_ERROR_CHECK(eth_start(&g_cfg));
 
-    esp_err_t err = camera_init(&s_cam);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Kamera-Initialisierung fehlgeschlagen (%s) - Neustart in 5 s", esp_err_to_name(err));
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        esp_restart();
+    if (ir_tx_init(g_cfg.ir_gpio) != ESP_OK) {
+        ESP_LOGE(TAG, "IR-Sender an GPIO %d konnte nicht gestartet werden", g_cfg.ir_gpio);
     }
 
-    rtsp_server_config_t rcfg = {
-        .port = CONFIG_APP_RTSP_PORT,
-        .path = CONFIG_APP_RTSP_PATH,
-        .max_clients = CONFIG_APP_RTSP_MAX_CLIENTS,
-        .fps = CONFIG_APP_CAM_FPS,
-        .width = s_cam.width,
-        .height = s_cam.height,
-    };
-    ESP_ERROR_CHECK(rtsp_server_start(&rcfg));
+    bool cam_ok = false;
+    esp_err_t err = camera_init(&s_cam);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Kamera-Initialisierung fehlgeschlagen (%s) - laufe ohne Videostream weiter",
+                 esp_err_to_name(err));
+    } else {
+        rtsp_server_config_t rcfg = {
+            .port = CONFIG_APP_RTSP_PORT,
+            .path = CONFIG_APP_RTSP_PATH,
+            .max_clients = CONFIG_APP_RTSP_MAX_CLIENTS,
+            .fps = CONFIG_APP_CAM_FPS,
+            .width = s_cam.width,
+            .height = s_cam.height,
+        };
+        ESP_ERROR_CHECK(rtsp_server_start(&rcfg));
+        /* Encoder-/Streaming-Task auf Kern 1 */
+        xTaskCreatePinnedToCore(stream_task, "stream", 8192, NULL, 6, NULL, 1);
+        cam_ok = true;
+    }
 
-    /* Encoder-/Streaming-Task auf Kern 1 */
-    xTaskCreatePinnedToCore(stream_task, "stream", 8192, NULL, 6, NULL, 1);
+    web_ui_start();
 
     char ip[16];
     while (!eth_wait_for_ip(pdMS_TO_TICKS(10000), ip, sizeof(ip))) {
         ESP_LOGW(TAG, "Warte auf Ethernet-Link / IP-Adresse ...");
     }
+    web_ui_set_ip(ip);
+    mqtt_ctrl_start(&g_cfg, ip);
+
     ESP_LOGI(TAG, "==============================================");
-    ESP_LOGI(TAG, " Stream: rtsp://%s:%d/%s", ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH);
+    ESP_LOGI(TAG, " Webseite: http://%s/", ip);
+    if (cam_ok) {
+        ESP_LOGI(TAG, " Stream:   rtsp://%s:%d/%s", ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH);
+    }
+    if (g_cfg.mqtt_uri[0]) {
+        ESP_LOGI(TAG, " IR-Topic: %s/ir/send", g_cfg.mqtt_topic);
+    }
     ESP_LOGI(TAG, "==============================================");
 }
