@@ -1,12 +1,10 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.2.0**
+**Version 1.2.1**
 
 Firmware für das **Waveshare ESP32-P4-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera (MIPI-CSI, 2 Lanes)** wird mit dem **Hardware-H.264-Encoder** des ESP32-P4 kodiert und als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet.
 
-```
-OV5640 ──MIPI-CSI──► ESP32-P4 (CSI/ISP ► [PPA] ► H.264-HW-Encoder) ──RTP/RTSP──► Ethernet
-```
+![Aufbau: OV5640 → ESP32-P4-ETH → RTSP / MQTT / Webseite, GPIO → Transistor → IR-Beleuchtung](docs/aufbau.svg)
 
 ## Funktionen
 
@@ -45,14 +43,14 @@ Im Release liegen zwei Gesamt-Images (Bootloader + Partitionstabelle + App), die
 
 | Datei | Chip-Revision |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.2.0-chip-rev-v3.bin` | ESP32-P4 v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.2.0-chip-rev-v1.bin` | ESP32-P4 v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.2.1-chip-rev-v3.bin` | ESP32-P4 v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.2.1-chip-rev-v1.bin` | ESP32-P4 v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Die Chip-Revision steht nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.2.0-chip-rev-v3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.2.1-chip-rev-v3.bin
 ```
 
 > Eine UF2-Datei gibt es für den ESP32-P4 nicht: Der Chip hat keinen UF2-Bootloader (kein „Laufwerk zum Draufkopieren“ wie beim RP2040).

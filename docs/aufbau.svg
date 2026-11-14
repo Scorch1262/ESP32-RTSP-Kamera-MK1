@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" width="960" height="520" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="pf" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4fc3f7"/>
+    </marker>
+    <marker id="po" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffb74d"/>
+    </marker>
+    <marker id="pg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#81c784"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="520" rx="14" fill="#111418"/>
+  <text x="30" y="42" fill="#e6e6e6" font-size="22" font-weight="600">P4-ETH-RTSP-Cam-MK1  ·  Aufbau</text>
+  <text x="30" y="66" fill="#9aa4b1" font-size="13">OV5640-Kamera als RTSP-Stream über Ethernet, IR-Beleuchtung per MQTT schaltbar</text>
+
+  <!-- Kamera -->
+  <rect x="30" y="120" width="170" height="90" rx="10" fill="#1b2027" stroke="#2a313b"/>
+  <circle cx="70" cy="165" r="22" fill="#0d1014" stroke="#4fc3f7" stroke-width="3"/>
+  <circle cx="70" cy="165" r="9" fill="#263238"/>
+  <text x="102" y="160" fill="#e6e6e6" font-size="15" font-weight="600">OV5640</text>
+  <text x="102" y="180" fill="#9aa4b1" font-size="12">Kamera</text>
+
+  <!-- Board -->
+  <rect x="290" y="95" width="300" height="270" rx="12" fill="#1b2027" stroke="#4fc3f7" stroke-width="1.5"/>
+  <text x="310" y="125" fill="#e6e6e6" font-size="16" font-weight="600">Waveshare ESP32-P4-ETH</text>
+  <rect x="310" y="142" width="260" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="322" y="164" fill="#cfd8dc" font-size="13">MIPI-CSI → ISP / PPA → YUV420</text>
+  <rect x="310" y="184" width="260" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="322" y="206" fill="#cfd8dc" font-size="13">H.264-Hardware-Encoder</text>
+  <rect x="310" y="226" width="125" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="322" y="248" fill="#cfd8dc" font-size="13">RTSP-Server</text>
+  <rect x="445" y="226" width="125" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="457" y="248" fill="#cfd8dc" font-size="13">MQTT-Client</text>
+  <rect x="310" y="268" width="125" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="322" y="290" fill="#cfd8dc" font-size="13">Webseite :80</text>
+  <rect x="445" y="268" width="125" height="34" rx="6" fill="#0d1014" stroke="#2f3742"/>
+  <text x="457" y="290" fill="#cfd8dc" font-size="13">GPIO-Ausgang</text>
+  <text x="310" y="340" fill="#9aa4b1" font-size="12">RJ45 · 100 Mbit/s · optional PoE</text>
+
+  <!-- Kamera → Board -->
+  <line x1="200" y1="165" x2="286" y2="160" stroke="#4fc3f7" stroke-width="2.5" marker-end="url(#pf)"/>
+  <text x="212" y="150" fill="#9aa4b1" font-size="11">MIPI-CSI</text>
+
+  <!-- Netzwerk -->
+  <rect x="680" y="95" width="250" height="60" rx="10" fill="#1b2027" stroke="#2a313b"/>
+  <text x="698" y="121" fill="#e6e6e6" font-size="14" font-weight="600">VLC / ffmpeg / Frigate</text>
+  <text x="698" y="141" fill="#ffcc80" font-size="12" font-family="Consolas, monospace">rtsp://&lt;IP&gt;:554/stream</text>
+
+  <rect x="680" y="185" width="250" height="78" rx="10" fill="#1b2027" stroke="#2a313b"/>
+  <text x="698" y="211" fill="#e6e6e6" font-size="14" font-weight="600">MQTT-Broker</text>
+  <text x="698" y="232" fill="#ffcc80" font-size="12" font-family="Consolas, monospace">Tuer/Kamera = 1 / 0</text>
+  <text x="698" y="251" fill="#9aa4b1" font-size="12" font-family="Consolas, monospace">Tuer/Kamera/Status</text>
+
+  <rect x="680" y="293" width="250" height="60" rx="10" fill="#1b2027" stroke="#2a313b"/>
+  <text x="698" y="319" fill="#e6e6e6" font-size="14" font-weight="600">Browser</text>
+  <text x="698" y="339" fill="#ffcc80" font-size="12" font-family="Consolas, monospace">http://&lt;IP&gt;/</text>
+
+  <line x1="592" y1="125" x2="676" y2="125" stroke="#4fc3f7" stroke-width="2.5" marker-end="url(#pf)"/>
+  <text x="600" y="117" fill="#9aa4b1" font-size="11">H.264/RTP</text>
+  <line x1="596" y1="224" x2="676" y2="224" stroke="#ffb74d" stroke-width="2.5" marker-end="url(#po)" marker-start="url(#po)"/>
+  <text x="608" y="216" fill="#9aa4b1" font-size="11">MQTT</text>
+  <line x1="596" y1="323" x2="676" y2="323" stroke="#81c784" stroke-width="2.5" marker-end="url(#pg)" marker-start="url(#pg)"/>
+  <text x="608" y="315" fill="#9aa4b1" font-size="11">HTTP</text>
+
+  <!-- IR-Beleuchtung -->
+  <line x1="507" y1="302" x2="507" y2="420" stroke="#ffb74d" stroke-width="2.5" marker-end="url(#po)"/>
+  <text x="515" y="390" fill="#9aa4b1" font-size="11">GPIO 20 (einstellbar)</text>
+
+  <rect x="290" y="424" width="430" height="74" rx="10" fill="#1b2027" stroke="#2a313b"/>
+  <text x="310" y="450" fill="#e6e6e6" font-size="14" font-weight="600">Transistor / MOSFET</text>
+  <text x="310" y="470" fill="#9aa4b1" font-size="12">BC337 (einzelne LED) oder AO3400 / IRLZ44N (12-V-Strahler)</text>
+  <text x="310" y="488" fill="#9aa4b1" font-size="12">optional „Low-aktiv“ für invertierte Module</text>
+
+  <line x1="720" y1="461" x2="786" y2="461" stroke="#ffb74d" stroke-width="2.5" marker-end="url(#po)"/>
+
+  <!-- IR-LED -->
+  <g transform="translate(830,461)">
+    <circle r="34" fill="#1b2027" stroke="#2a313b"/>
+    <path d="M-12,-12 L-12,12 L10,0 z" fill="#e57373"/>
+    <line x1="12" y1="-13" x2="12" y2="13" stroke="#e57373" stroke-width="3"/>
+    <path d="M16,-20 l14,-12 M24,-14 l14,-12" stroke="#e57373" stroke-width="2" fill="none"/>
+  </g>
+  <text x="878" y="458" fill="#e6e6e6" font-size="13" font-weight="600">IR</text>
+  <text x="878" y="475" fill="#9aa4b1" font-size="11">850/940 nm</text>
+</svg>
