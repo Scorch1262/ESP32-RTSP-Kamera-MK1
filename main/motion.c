@@ -103,3 +103,14 @@ int motion_brightness_pct(void)
 {
     return s_bright < 0 ? -1 : (s_bright * 100 + 127) / 255;
 }
+
+void motion_trigger(void)
+{
+    s_last = esp_timer_get_time();
+}
+
+void motion_clear(void)
+{
+    s_last = 0;
+    s_hits = 0;
+}

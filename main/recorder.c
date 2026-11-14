@@ -499,6 +499,14 @@ void recorder_finish(int timeout_ms)
     s_last[0] = 0;
 }
 
+void recorder_stop(void)
+{
+    if (s_rec) {
+        s_stop_req = true;
+    }
+    s_want_start = false;
+}
+
 void recorder_resume(void)
 {
     s_block_until = 0;

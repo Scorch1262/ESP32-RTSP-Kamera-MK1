@@ -24,3 +24,9 @@ bool motion_active(void);
 
 /** Mittlere Bildhelligkeit in Prozent (0..100), -1 = noch kein Bild ausgewertet. */
 int motion_brightness_pct(void);
+
+/** Bewegung von aussen ausloesen (z. B. MQTT), Zustand "aktiv" fuer die Haltezeit. */
+void motion_trigger(void);
+
+/** Bewegungszustand zuruecksetzen. */
+void motion_clear(void);

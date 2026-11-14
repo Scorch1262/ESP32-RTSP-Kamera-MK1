@@ -86,10 +86,19 @@ static void update_dark(void)
     }
 }
 
-/* MQTT-Zustaende melden: bei Aenderung und nach jeder (Neu-)Verbindung */
+static volatile int64_t s_publish_req_us;
+
+/* Von mqtt_ctrl: nach Verbindung oder Befehl alle Zustaende kurz danach erneut melden */
+void app_request_state_publish(void)
+{
+    s_publish_req_us = esp_timer_get_time() + 700 * 1000;
+}
+
+/* MQTT-Zustaende melden: bei Aenderung und auf Anforderung (Verbindung, Befehl) */
 static void publish_states(bool force)
 {
     static int last_rec = -1, last_cont = -1, last_mot = -1, last_dark = -2, last_bright = -100;
+    static int last_ir = -1, last_recen = -1, last_sens = -1;
     static int64_t last_bright_t;
     int rec = recorder_active() ? 1 : 0;
     int cont = recorder_continuous() ? 1 : 0;
@@ -98,6 +107,21 @@ static void publish_states(bool force)
     int64_t now = esp_timer_get_time();
     char v[16];
 
+    int ir = ir_light_get() ? 1 : 0;
+    if (force || ir != last_ir) {
+        mqtt_ctrl_publish("IR-Licht", ir ? "1" : "0");
+        last_ir = ir;
+    }
+    int recen = g_cfg.rec_enable ? 1 : 0;
+    if (force || recen != last_recen) {
+        mqtt_ctrl_publish("Bewegungsaufnahme", recen ? "1" : "0");
+        last_recen = recen;
+    }
+    if (force || g_cfg.motion_sens != last_sens) {
+        snprintf(v, sizeof(v), "%d", g_cfg.motion_sens);
+        mqtt_ctrl_publish("Empfindlichkeit", v);
+        last_sens = g_cfg.motion_sens;
+    }
     if (force || rec != last_rec) {
         mqtt_ctrl_publish("Aufzeichnung", rec ? "1" : "0");
         if (rec != last_rec) {
@@ -151,7 +175,6 @@ static void status_task(void *arg)
 {
     int tick = 0;
     eth_state_t last = (eth_state_t)-1;
-    bool mqtt_was = false;
     for (;;) {
         eth_state_t st = eth_get_state();
         const char *wip = wifi_ctrl_ip();
@@ -160,8 +183,14 @@ static void status_task(void *arg)
         }
         update_dark();
         bool mq = mqtt_ctrl_connected();
-        publish_states(mq && !mqtt_was);   /* nach (Neu-)Verbindung alles einmal senden */
-        mqtt_was = mq;
+        bool force = false;
+        if (s_publish_req_us && esp_timer_get_time() >= s_publish_req_us) {
+            s_publish_req_us = 0;
+            force = true;
+        }
+        if (mq) {
+            publish_states(force);
+        }
         bool blink = (tick & 1);
         switch (st) {
         case ETH_STATE_ERROR:   status_led_set(blink ? 40 : 0, 0, 0); break;

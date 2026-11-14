@@ -173,7 +173,7 @@ static esp_err_t h_root(httpd_req_t *req)
              "<tr><td>RTSP-Stream</td><td><code>rtsp://%s:%d/%s</code></td></tr>"
              "<tr><td>RTSP-Clients</td><td>%d</td></tr>"
              "<tr><td>MQTT</td><td class=%s>%s</td></tr>"
-             "<tr><td>Schalt-Topic</td><td><code>%s</code> = 0 / 1</td></tr>"
+             "<tr><td>MQTT-Topics</td><td><code>%s/IR-Licht</code> = 0 / 1 (Zustand und Steuerung im selben Topic)</td></tr>"
              "<tr><td>IR-GPIO</td><td>%s%d%s</td></tr>"
              "<tr><td>Laufzeit</td><td>%lld min</td></tr>",
              s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
@@ -277,7 +277,7 @@ static esp_err_t h_root(httpd_req_t *req)
              "<div class=row><div><label>Benutzer</label><input name=mqtt_user value=\"%s\" maxlength=63></div>"
              "<div><label>Passwort (leer = unveraendert)</label><input type=password name=mqtt_pass maxlength=63></div></div>"
              "<label><input type=checkbox name=mqtt_pass_clear value=1 style='width:auto'> Passwort loeschen</label>"
-             "<label>Schalt-Topic der IR-Beleuchtung (Nutzlast 0 = aus, 1 = ein)</label>"
+             "<label>MQTT-Basis-Topic (z. B. Tuer/Kamera &rarr; Tuer/Kamera/IR-Licht, Tuer/Kamera/Aufzeichnung ...)</label>"
              "<input name=mqtt_topic value=\"%s\" maxlength=63>"
              "<label>GPIO der IR-Beleuchtung (-1 = aus)</label><input name=ir_gpio type=number min=-1 max=54 value=%d>"
              "<label><input type=checkbox name=ir_active_low value=1 style='width:auto' %s> Ausgang Low-aktiv (Low = ein)</label>",
@@ -339,7 +339,7 @@ static esp_err_t h_root(httpd_req_t *req)
             "<input name=rec_segment_s type=number min=60 max=3600 value=%d>"
             "<label>NTP-Zeitserver (fuer Dateinamen mit Datum/Uhrzeit)</label>"
             "<input name=ntp_server value=\"%s\" maxlength=47>"
-            "<h2 style='margin-top:18px'>Dunkel-Meldung (MQTT &lt;Topic&gt;/Dunkel)</h2>"
+            "<h2 style='margin-top:18px'>Dunkel-Meldung (MQTT &lt;Basis-Topic&gt;/Dunkel)</h2>"
             "<div class=row><div><label>Dunkel unter Helligkeit (%%)</label>"
             "<input name=dark_pct type=number min=1 max=90 value=%d></div>"
             "<div><label>Bei eingeschaltetem IR-Licht erst ab (%%) wieder hell</label>"

@@ -41,6 +41,9 @@ const char *recorder_reason_text(void);
 /** Beendet eine laufende Aufnahme sauber (z. B. vor einem Neustart) und wartet bis zu timeout_ms. */
 void recorder_finish(int timeout_ms);
 
+/** Beendet eine laufende Aufnahme (Datei wird sauber abgeschlossen). */
+void recorder_stop(void);
+
 /** Erlaubt nach recorder_finish() wieder Aufnahmen (Daueraufnahme laeuft dann weiter). */
 void recorder_resume(void);
 
