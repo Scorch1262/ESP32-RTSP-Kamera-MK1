@@ -27,7 +27,7 @@ static void publish_state(void)
         return;
     }
     char t[96];
-    sub_topic(t, sizeof(t), "Status");
+    sub_topic(t, sizeof(t), "IR-Licht");
     esp_mqtt_client_publish(s_client, t, ir_light_get() ? "1" : "0", 1, 1, 0);
 }
 

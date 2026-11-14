@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.5.1**
+**Version 1.5.2**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -81,16 +81,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.5.1-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.5.1-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.5.1-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.2-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.2-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.5.2-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.1-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.1-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.2-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.5.2-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -162,7 +162,7 @@ Mit `-r` übernimmt das Board den Zustand auch nach einem Neustart; ohne Broker 
 | Topic | Richtung | Inhalt |
 |---|---|---|
 | `Tuer/Kamera` | → Board | `0` / `1` – Beleuchtung aus / ein |
-| `Tuer/Kamera/Status` | ← Board | aktueller Zustand `0` / `1` |
+| `Tuer/Kamera/IR-Licht` | ← Board | aktueller Zustand des IR-Lichts `0` / `1` |
 | `Tuer/Kamera/Verfuegbar` | ← Board | `online` / `offline` (Last Will) |
 | `Tuer/Kamera/Info` | ← Board | Version, IP, RTSP-URL |
 | `Tuer/Kamera/Bewegung` | ← Board | `1` bei erkannter Bewegung, `0` nach 5 s ohne Bewegung |
@@ -172,7 +172,7 @@ Mit `-r` übernimmt das Board den Zustand auch nach einem Neustart; ohne Broker 
 | `Tuer/Kamera/Dunkel` | ← Board | `1` = Bild zu dunkel, `0` = hell genug |
 | `Tuer/Kamera/Helligkeit` | ← Board | mittlere Bildhelligkeit in % (bei Änderung ≥ 3 %, höchstens alle 10 s) |
 
-Wird über die Webseite geschaltet, sendet das Board den neuen Zustand sofort auf `Tuer/Kamera` und `Tuer/Kamera/Status`. War MQTT in dem Moment nicht verbunden, wird er nach der Neuverbindung gemeldet.
+Wird über die Webseite geschaltet, sendet das Board den neuen Zustand sofort auf `Tuer/Kamera` und `Tuer/Kamera/IR-Licht`. War MQTT in dem Moment nicht verbunden, wird er nach der Neuverbindung gemeldet.
 
 ### Dunkel-Meldung
 
@@ -279,12 +279,12 @@ Die Firmware erkennt beim Start selbst, ob die CSI-Einheit direkt YUV420 liefern
 ## Fehlersuche
 
 - **`esp_video_init fehlgeschlagen`** (P4) – Kabel/Stecker der Kamera prüfen (Kontakte richtig herum?), SCCB-Pins im menuconfig prüfen.
-- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.5.1 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
+- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.5.2 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
 - **`W5500 antwortet nicht`** (S3) – Die Firmware versucht 20, 10 und 5 MHz SPI-Takt. Antwortet der Chip bei keinem davon, ist er nicht erreichbar (Stromversorgung bzw. PoE-Modul prüfen).
 - **`esp_camera_init: ESP_ERR_NOT_FOUND`** (S3) – Kamera nicht erkannt: Flachbandkabel richtig herum eingesteckt? Board einmal stromlos machen.
 - **„Keine MicroSD-Karte“ / „kein FAT-Dateisystem“** – Karte als FAT32 formatieren, einlegen, Board neu starten.
 - **„SD-Karte zu langsam, Bild verworfen“** – schnellere Karte (Class 10 / U1 oder besser) verwenden oder beim S3 die Auflösung verringern.
-- **„Bewegungserkennung: JPEG nicht dekodierbar“** (S3) – erscheint höchstens einmal pro Minute mit Angaben zum Bildformat. Ab v1.5.1 werden auch JPEGs ohne Huffman-Tabellen (typisch für OV5640/OV2640) dekodiert.
+- **„Bewegungserkennung: JPEG nicht dekodierbar“** (S3) – erscheint höchstens einmal pro Minute mit Angaben zum Bildformat. Ab v1.5.2 werden auch JPEGs ohne Huffman-Tabellen (typisch für OV5640/OV2640) dekodiert.
 - **WLAN verbindet nicht** – Status auf der Webseite zeigt den Grund (z. B. Grund 15/202 = falsches Passwort, 201 = WLAN nicht gefunden). Der ESP32-S3 kann nur 2,4 GHz.
 - **Stream ruckelt beim S3** – Auflösung verkleinern oder JPEG-Qualitätszahl erhöhen (z. B. 15–20); über TCP abrufen.
 - **Kein Link** – Kabel/Switch prüfen; beim P4 mit anderem PHY im menuconfig „Generischer IEEE-802.3-PHY“ und PHY-Adresse `-1` (Autosuche) wählen.

@@ -7,7 +7,7 @@
 /**
  * Verbindet sich mit dem MQTT-Broker (falls konfiguriert).
  *   <topic>             <- 0 / 1  (IR-Beleuchtung aus / ein)
- *   <topic>/Status      -> 0 / 1  (aktueller Zustand)
+ *   <topic>/IR-Licht    -> 0 / 1  (aktueller Zustand des IR-Lichts)
  *   <topic>/Verfuegbar  -> online / offline (Last Will)
  *   <topic>/Info        -> Geraeteinfo inkl. RTSP-URL 
  *   <topic>/Bewegung    -> 1 / 0 (Bewegung erkannt / vorbei)
