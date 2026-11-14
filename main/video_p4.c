@@ -11,11 +11,34 @@
 #include "esp_h264_alloc.h"
 #include "camera.h"
 #include "video.h"
+#include "recorder.h"
+#include "motion.h"
+#include "app_config.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "video";
 
 static camera_info_t s_cam;
+
+#define MOTION_W            160
+#define MOTION_H            90
+#define MOTION_INTERVAL_US  (250 * 1000)
+static uint8_t s_gray[MOTION_W * MOTION_H];
+
+/* Luminanz aus dem YUV420-Layout O_UYY_E_VYY verkleinert auslesen:
+   je Zeile Gruppen aus 3 Byte [U oder V, Y0, Y1] fuer 2 Bildpunkte. */
+static void sample_luma(const uint8_t *yuv, uint32_t w, uint32_t h)
+{
+    const uint32_t stride = w * 3 / 2;
+    for (int gy = 0; gy < MOTION_H; gy++) {
+        uint32_t y = (uint32_t)gy * h / MOTION_H;
+        const uint8_t *row = yuv + y * stride;
+        for (int gx = 0; gx < MOTION_W; gx++) {
+            uint32_t x = (uint32_t)gx * w / MOTION_W;
+            s_gray[gy * MOTION_W + gx] = row[(x / 2) * 3 + 1 + (x & 1)];
+        }
+    }
+}
 
 static void stream_task(void *arg)
 {
@@ -67,7 +90,19 @@ static void stream_task(void *arg)
             continue;
         }
 
-        if (rtsp_server_take_idr_request() && param) {
+        int64_t now_us = esp_timer_get_time();
+        static int64_t last_motion;
+        if (now_us - last_motion >= MOTION_INTERVAL_US) {
+            last_motion = now_us;
+            sample_luma(frame.data, s_cam.width, s_cam.height);
+            if (motion_feed(s_gray, MOTION_W, MOTION_H, g_cfg.motion_sens)) {
+                recorder_motion();
+            }
+        }
+
+        bool idr_rtsp = rtsp_server_take_idr_request();
+        bool idr_rec = recorder_take_idr_request();
+        if ((idr_rtsp || idr_rec) && param) {
             esp_h264_enc_force_idr(&param->base);
         }
 
@@ -88,7 +123,9 @@ static void stream_task(void *arg)
             continue;
         }
 
-        rtsp_server_push_frame(out_buf, out.length, ts90k, out.frame_type == ESP_H264_FRAME_TYPE_IDR);
+        bool is_idr = (out.frame_type == ESP_H264_FRAME_TYPE_IDR);
+        rtsp_server_push_frame(out_buf, out.length, ts90k, is_idr);
+        recorder_on_frame(out_buf, out.length, is_idr);
 
         stat_frames++;
         stat_bytes += out.length;

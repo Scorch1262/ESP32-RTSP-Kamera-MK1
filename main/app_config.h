@@ -22,6 +22,16 @@ typedef struct {
     /* Ab v1.3.0 (nur ESP32-S3 genutzt) - am Ende angehaengt, aeltere Einstellungen bleiben gueltig */
     int  cam_width;         /* Aufloesung: 640, 800, 1024, 1280 (HD), 1281 (SXGA), 1600, 1920 */
     int  cam_quality;       /* JPEG-Qualitaet 4..40 (kleiner = besser) */
+
+    /* Ab v1.4.0 - ebenfalls am Ende angehaengt */
+    int  wifi_mode;         /* 0 = aus, 1 = mit WLAN verbinden, 2 = eigener Access Point (nur ESP32-S3) */
+    char wifi_ssid[33];
+    char wifi_pass[65];
+    bool rec_enable;        /* Aufnahme auf SD-Karte bei Bewegung */
+    bool rec_autodelete;    /* aelteste Aufnahmen loeschen, wenn die Karte voll ist */
+    int  rec_seconds;       /* Laenge eines Bewegungs-Clips in Sekunden */
+    int  motion_sens;       /* Empfindlichkeit 1..100 */
+    char ntp_server[48];
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */

@@ -76,6 +76,16 @@ static void mqtt_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
+void mqtt_ctrl_publish(const char *suffix, const char *payload, bool retain)
+{
+    if (!s_connected) {
+        return;
+    }
+    char t[128];
+    sub_topic(t, sizeof(t), suffix);
+    esp_mqtt_client_publish(s_client, t, payload, 0, 0, retain);
+}
+
 void mqtt_ctrl_set_light(bool on)
 {
     ir_light_set(on);

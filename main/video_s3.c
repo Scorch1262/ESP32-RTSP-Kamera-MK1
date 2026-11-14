@@ -5,6 +5,8 @@
  * das unveraendert per RTP verschickt wird.
  */
 #include <inttypes.h>
+#include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -14,6 +16,10 @@
 #include "esp_camera.h"
 #include "video.h"
 #include "app_config.h"
+#include "recorder.h"
+#include "motion.h"
+#include "jpeg_decoder.h"
+#include "freertos/semphr.h"
 #include "sdkconfig.h"
 
 static const char *TAG = "video";
@@ -30,6 +36,57 @@ static const char *TAG = "video";
 #endif
 
 static int s_fps_target;
+
+/* Bewegungserkennung: Kopie eines JPEG-Bildes, im eigenen Task auf 1/8 dekodiert */
+#define MOTION_INTERVAL_US  (300 * 1000)
+#define MOTION_JPEG_MAX     (512 * 1024)
+static uint8_t *s_mjpeg;
+static size_t s_mjpeg_len;
+static volatile bool s_motion_busy;
+static SemaphoreHandle_t s_motion_sem;
+
+static void motion_task(void *arg)
+{
+    uint8_t *rgb = NULL, *gray = NULL;
+    size_t rgb_cap = 0;
+    for (;;) {
+        xSemaphoreTake(s_motion_sem, portMAX_DELAY);
+        esp_jpeg_image_cfg_t jc = {
+            .indata = s_mjpeg,
+            .indata_size = s_mjpeg_len,
+            .out_format = JPEG_IMAGE_FORMAT_RGB888,
+            .out_scale = JPEG_IMAGE_SCALE_1_8,
+        };
+        esp_jpeg_image_output_t info;
+        if (esp_jpeg_get_image_info(&jc, &info) == ESP_OK) {
+            size_t need = (size_t)info.width * info.height * 3;
+            if (need > rgb_cap) {
+                free(rgb);
+                free(gray);
+                rgb = heap_caps_malloc(need, MALLOC_CAP_SPIRAM);
+                gray = heap_caps_malloc(need / 3, MALLOC_CAP_SPIRAM);
+                rgb_cap = (rgb && gray) ? need : 0;
+            }
+            if (rgb_cap) {
+                jc.outbuf = rgb;
+                jc.outbuf_size = rgb_cap;
+                jc.indata = s_mjpeg;
+                jc.indata_size = s_mjpeg_len;
+                if (esp_jpeg_decode(&jc, &info) == ESP_OK) {
+                    int n = info.width * info.height;
+                    for (int i = 0; i < n; i++) {
+                        const uint8_t *p = rgb + i * 3;
+                        gray[i] = (uint8_t)((p[0] * 77 + p[1] * 150 + p[2] * 29) >> 8);
+                    }
+                    if (motion_feed(gray, info.width, info.height, g_cfg.motion_sens)) {
+                        recorder_motion();
+                    }
+                }
+            }
+        }
+        s_motion_busy = false;
+    }
+}
 
 typedef struct {
     int key;            /* Wert in der Konfiguration (Bildbreite, SXGA = 1281) */
@@ -70,9 +127,20 @@ static void stream_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
-        uint32_t ts90k = (uint32_t)((esp_timer_get_time() * 9) / 100);
+        int64_t now_us = esp_timer_get_time();
+        uint32_t ts90k = (uint32_t)((now_us * 9) / 100);
         if (rtsp_server_active_clients() > 0) {
             rtsp_server_push_jpeg(fb->buf, fb->len, ts90k);
+        }
+        recorder_on_frame(fb->buf, fb->len, true);
+
+        static int64_t last_motion;
+        if (s_mjpeg && !s_motion_busy && fb->len <= MOTION_JPEG_MAX && now_us - last_motion >= MOTION_INTERVAL_US) {
+            last_motion = now_us;
+            memcpy(s_mjpeg, fb->buf, fb->len);
+            s_mjpeg_len = fb->len;
+            s_motion_busy = true;
+            xSemaphoreGive(s_motion_sem);
         }
         stat_frames++;
         stat_bytes += fb->len;
@@ -169,5 +237,10 @@ esp_err_t video_init(video_info_t *info)
 
 void video_start(void)
 {
+    s_mjpeg = heap_caps_malloc(MOTION_JPEG_MAX, MALLOC_CAP_SPIRAM);
+    s_motion_sem = xSemaphoreCreateBinary();
+    if (s_mjpeg && s_motion_sem) {
+        xTaskCreatePinnedToCore(motion_task, "motion", 6144, NULL, 3, NULL, 0);
+    }
     xTaskCreatePinnedToCore(stream_task, "stream", 6144, NULL, 6, NULL, 1);
 }

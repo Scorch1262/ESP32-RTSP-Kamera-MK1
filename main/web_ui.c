@@ -1,5 +1,5 @@
 /*
- * Konfigurations-Webseite: Netzwerk, MQTT, IR-Beleuchtung (Schalter + Einstellungen).
+ * Konfigurations-Webseite: Netzwerk, WLAN, MQTT, IR-Beleuchtung, Bewegungsaufnahmen (SD-Karte).
  */
 #include <string.h>
 #include <stdio.h>
@@ -12,6 +12,15 @@
 #include "ir_light.h"
 #include "mqtt_ctrl.h"
 #include "rtsp_server.h"
+#include "wifi_ctrl.h"
+#include "sdcard.h"
+#include "recorder.h"
+#include "motion.h"
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_app_desc.h"
@@ -147,14 +156,61 @@ static esp_err_t h_root(httpd_req_t *req)
              "<tr><td>MQTT</td><td class=%s>%s</td></tr>"
              "<tr><td>Schalt-Topic</td><td><code>%s</code> = 0 / 1</td></tr>"
              "<tr><td>IR-GPIO</td><td>%s%d%s</td></tr>"
-             "<tr><td>Laufzeit</td><td>%lld min</td></tr>"
-             "</table></div>",
+             "<tr><td>Laufzeit</td><td>%lld min</td></tr>",
              s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
              rtsp_server_active_clients(),
              c->mqtt_uri[0] == 0 ? "bad" : (mqtt_ctrl_connected() ? "ok" : "bad"),
              c->mqtt_uri[0] == 0 ? "nicht konfiguriert" : (mqtt_ctrl_connected() ? "verbunden" : "nicht verbunden"),
              c->mqtt_topic, c->ir_gpio < 0 ? "aus " : "", c->ir_gpio, c->ir_active_low ? " (Low-aktiv)" : "",
              esp_timer_get_time() / 60000000LL);
+    {
+        char sdi[64];
+        sdcard_info(sdi, sizeof(sdi));
+        const char *wip = wifi_ctrl_ip();
+        int64_t lm = motion_last_time();
+        char lms[48] = "noch keine";
+        if (lm) {
+            snprintf(lms, sizeof(lms), "vor %lld s (Pegel %d %%)", (esp_timer_get_time() - lm) / 1000000LL,
+                     motion_last_level() / 10);
+        }
+        time_t now = time(NULL);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        char ts[32];
+        if (tm.tm_year + 1900 >= 2024) {
+            strftime(ts, sizeof(ts), "%d.%m.%Y %H:%M:%S", &tm);
+        } else {
+            strlcpy(ts, "unbekannt (kein NTP)", sizeof(ts));
+        }
+        send_fmt(req,
+                 "<tr><td>WLAN</td><td>%s%s%s</td></tr>"
+                 "<tr><td>Uhrzeit</td><td>%s</td></tr>"
+                 "<tr><td>MicroSD</td><td class=%s>%s</td></tr>"
+                 "<tr><td>Letzte Bewegung</td><td>%s</td></tr>"
+                 "<tr><td>Aufnahme</td><td class=%s>%s %s</td></tr>"
+                 "</table></div>",
+                 wifi_ctrl_state(), wip ? " &ndash; Web: http://" : "", wip ? wip : "",
+                 ts,
+                 sdcard_ok() ? "ok" : "bad", sdi,
+                 lms,
+                 recorder_active() ? "ok" : "", recorder_active() ? "laeuft:" : (c->rec_enable ? "bereit, letzte:" : "aus, letzte:"),
+                 recorder_last_file()[0] ? recorder_last_file() : "-");
+        if (tm.tm_year + 1900 < 2024) {
+            /* Uhrzeit aus dem Browser uebernehmen, wenn kein NTP-Server erreichbar ist */
+            httpd_resp_sendstr_chunk(req,
+                "<script>fetch('/api/settime',{method:'POST',body:String(Math.floor(Date.now()/1000))+','+"
+                "String(-new Date().getTimezoneOffset())})</script>");
+        }
+    }
+
+    /* Aufnahmen */
+    send_fmt(req,
+        "<div class=card><h2>Aufnahmen (MicroSD)</h2>"
+        "<p style='font-size:13px;color:#9aa4b1'>Bei Bewegung im Bild wird ein Clip von %d s gespeichert (%s).</p>"
+        "<a href=/aufnahmen><button>Aufnahmen anzeigen / herunterladen</button></a> "
+        "<button class=sec onclick=\"fetch('/rec/start',{method:'POST'}).then(x=>x.text()).then(t=>alert(t))\">"
+        "Clip jetzt aufnehmen</button></div>",
+        c->rec_seconds, c->rec_enable ? "Bewegungsaufnahme an" : "Bewegungsaufnahme aus");
 
     /* IR-Beleuchtung */
     send_fmt(req,
@@ -203,6 +259,52 @@ static esp_err_t h_root(httpd_req_t *req)
     send_fmt(req, "</select><label>JPEG-Qualitaet (4 = beste, 40 = kleinste Datenmenge)</label>"
                   "<input name=cam_quality type=number min=4 max=40 value=%d>", c->cam_quality);
 #endif
+    /* WLAN */
+    if (wifi_ctrl_available()) {
+        char es[80];
+        html_escape(c->wifi_ssid, es, sizeof(es));
+        send_fmt(req,
+            "<h2 style='margin-top:18px'>WLAN</h2>"
+            "<label>Betriebsart</label><select name=wifi_mode>"
+            "<option value=0 %s>Aus</option>"
+            "<option value=1 %s>Mit vorhandenem WLAN verbinden</option>"
+            "<option value=2 %s>Eigener Access Point (IP 192.168.4.1)</option></select>"
+            "<label>WLAN-Name (SSID) &ndash; beim Access Point leer = automatisch</label>"
+            "<div class=row><div style='flex:3'><input name=wifi_ssid id=ssid list=ssids value=\"%s\" maxlength=32>"
+            "<datalist id=ssids></datalist></div>"
+            "<div style='flex:1'><button type=button class=sec style='margin-top:0;width:100%%' onclick=scan()>WLAN suchen</button></div></div>"
+            "<label>WLAN-Passwort (leer = unveraendert; Access Point: mind. 8 Zeichen, sonst offen)</label>"
+            "<input type=password name=wifi_pass maxlength=64>"
+            "<label><input type=checkbox name=wifi_pass_clear value=1 style='width:auto'> WLAN-Passwort loeschen</label>"
+            "<script>function scan(){var d=document.getElementById('ssids');d.innerHTML='';"
+            "fetch('/api/wifi-scan').then(x=>x.json()).then(l=>{l.forEach(a=>{var o=document.createElement('option');"
+            "o.value=a.ssid;o.label=a.rssi+' dBm'+(a.open?' (offen)':'');d.appendChild(o)});"
+            "alert(l.length+' WLAN(s) gefunden - im Feld SSID auswaehlen')})}</script>",
+            c->wifi_mode == 0 ? "selected" : "", c->wifi_mode == 1 ? "selected" : "",
+            c->wifi_mode == 2 ? "selected" : "", es);
+    } else {
+        httpd_resp_sendstr_chunk(req, "<h2 style='margin-top:18px'>WLAN</h2>"
+            "<p style='font-size:13px;color:#9aa4b1'>Dieses Board hat kein WLAN.</p>");
+    }
+
+    /* Aufnahme */
+    {
+        char en[80];
+        html_escape(c->ntp_server, en, sizeof(en));
+        send_fmt(req,
+            "<h2 style='margin-top:18px'>Bewegungsaufnahme (MicroSD)</h2>"
+            "<label><input type=checkbox name=rec_enable value=1 style='width:auto' %s> Bei Bewegung aufnehmen</label>"
+            "<div class=row><div><label>Clip-Laenge (Sekunden, 5&ndash;600)</label>"
+            "<input name=rec_seconds type=number min=5 max=600 value=%d></div>"
+            "<div><label>Empfindlichkeit (1 = wenig, 100 = sehr empfindlich)</label>"
+            "<input name=motion_sens type=number min=1 max=100 value=%d></div></div>"
+            "<label><input type=checkbox name=rec_autodelete value=1 style='width:auto' %s> "
+            "Aelteste Aufnahmen automatisch loeschen, wenn die Karte voll ist</label>"
+            "<label>NTP-Zeitserver (fuer Dateinamen mit Datum/Uhrzeit)</label>"
+            "<input name=ntp_server value=\"%s\" maxlength=47>",
+            c->rec_enable ? "checked" : "", c->rec_seconds, c->motion_sens,
+            c->rec_autodelete ? "checked" : "", en);
+    }
     httpd_resp_sendstr_chunk(req, "<button type=submit>Speichern &amp; Neustart</button></form>");
 
     httpd_resp_sendstr_chunk(req, "</body></html>");
@@ -270,6 +372,34 @@ static esp_err_t h_save(httpd_req_t *req)
         c.cam_quality = q < 4 ? 4 : (q > 40 ? 40 : q);
     }
 #endif
+    if (wifi_ctrl_available()) {
+        if (form_get(body, "wifi_mode", v, sizeof(v)) && v[0]) {
+            int m = atoi(v);
+            c.wifi_mode = (m < 0 || m > 2) ? 0 : m;
+        }
+        if (form_get(body, "wifi_ssid", v, sizeof(v))) {
+            strlcpy(c.wifi_ssid, v, sizeof(c.wifi_ssid));
+        }
+        if (form_get(body, "wifi_pass", v, sizeof(v)) && v[0]) {
+            strlcpy(c.wifi_pass, v, sizeof(c.wifi_pass));
+        }
+        if (form_get(body, "wifi_pass_clear", v, sizeof(v))) {
+            c.wifi_pass[0] = 0;
+        }
+    }
+    c.rec_enable = form_get(body, "rec_enable", v, sizeof(v));
+    c.rec_autodelete = form_get(body, "rec_autodelete", v, sizeof(v));
+    if (form_get(body, "rec_seconds", v, sizeof(v)) && v[0]) {
+        int n = atoi(v);
+        c.rec_seconds = n < 5 ? 5 : (n > 600 ? 600 : n);
+    }
+    if (form_get(body, "motion_sens", v, sizeof(v)) && v[0]) {
+        int n = atoi(v);
+        c.motion_sens = n < 1 ? 1 : (n > 100 ? 100 : n);
+    }
+    if (form_get(body, "ntp_server", v, sizeof(v))) {
+        strlcpy(c.ntp_server, v, sizeof(c.ntp_server));
+    }
     free(body);
 
     esp_err_t err = config_save(&c);
@@ -330,11 +460,217 @@ static esp_err_t h_status(httpd_req_t *req)
     return httpd_resp_sendstr(req, out);
 }
 
+/* ------------------------------------------------------------------------- */
+/* Aufnahmen                                                                  */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    char name[64];
+    uint32_t size;
+} rec_file_t;
+
+static int cmp_desc(const void *a, const void *b)
+{
+    return strcmp(((const rec_file_t *)b)->name, ((const rec_file_t *)a)->name);
+}
+
+/* Nur einfache Dateinamen zulassen (kein Pfad) */
+static bool name_ok(const char *n)
+{
+    if (!n[0] || strlen(n) > 63 || strstr(n, "..")) {
+        return false;
+    }
+    for (const char *p = n; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static esp_err_t h_aufnahmen(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_sendstr_chunk(req, PAGE_HEAD);
+    httpd_resp_sendstr_chunk(req, "<h1>Aufnahmen <a href=/ style='font-size:13px;color:#4fc3f7'>&larr; zurueck</a></h1>");
+    if (!sdcard_ok()) {
+        httpd_resp_sendstr_chunk(req, "<div class=card><p class=bad>Keine MicroSD-Karte gefunden "
+                                      "(FAT32 formatiert einlegen und Board neu starten).</p></div></body></html>");
+        httpd_resp_sendstr_chunk(req, NULL);
+        return ESP_OK;
+    }
+    char sdi[64];
+    sdcard_info(sdi, sizeof(sdi));
+
+    int cap = 256, n = 0;
+    rec_file_t *files = malloc(cap * sizeof(rec_file_t));
+    DIR *d = opendir(SD_REC_DIR);
+    if (d && files) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_type == DT_DIR) {
+                continue;
+            }
+            if (n == cap) {
+                rec_file_t *nf = realloc(files, cap * 2 * sizeof(rec_file_t));
+                if (!nf) {
+                    break;
+                }
+                files = nf;
+                cap *= 2;
+            }
+            strlcpy(files[n].name, e->d_name, sizeof(files[n].name));
+            char path[300];
+            struct stat st;
+            snprintf(path, sizeof(path), SD_REC_DIR "/%s", e->d_name);
+            files[n].size = (stat(path, &st) == 0) ? (uint32_t)st.st_size : 0;
+            n++;
+        }
+        closedir(d);
+    }
+    if (files && n > 1) {
+        qsort(files, n, sizeof(rec_file_t), cmp_desc);
+    }
+    send_fmt(req, "<div class=card style='max-width:900px'><h2>%d Datei(en) &ndash; Karte: %s</h2>"
+                  "<table style='width:100%%'><tr><td>Datei</td><td>Groesse</td><td></td></tr>", n, sdi);
+    for (int i = 0; i < n; i++) {
+        bool cur = recorder_active() && strcmp(files[i].name, recorder_last_file()) == 0;
+        send_fmt(req,
+                 "<tr><td>%s%s</td><td>%.1f MB</td><td style='white-space:nowrap'>"
+                 "<a href=\"/sd/%s\" download><button style='margin:2px'>Herunterladen</button></a>"
+                 "<button class=sec style='margin:2px' onclick=\"del('%s')\">Loeschen</button></td></tr>",
+                 files[i].name, cur ? " <span class=ok>(laeuft)</span>" : "", files[i].size / 1048576.0,
+                 files[i].name, files[i].name);
+    }
+    httpd_resp_sendstr_chunk(req,
+        "</table></div><script>function del(n){if(confirm(n+' loeschen?'))"
+        "fetch('/sd-loeschen',{method:'POST',body:n}).then(()=>location.reload())}</script></body></html>");
+    httpd_resp_sendstr_chunk(req, NULL);
+    free(files);
+    return ESP_OK;
+}
+
+static esp_err_t h_download(httpd_req_t *req)
+{
+    const char *name = req->uri + 4;          /* hinter "/sd/" */
+    char dec[96];
+    strlcpy(dec, name, sizeof(dec));
+    char *q = strchr(dec, '?');
+    if (q) {
+        *q = 0;
+    }
+    url_decode(dec);
+    if (!sdcard_ok() || !name_ok(dec)) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Datei nicht gefunden");
+        return ESP_FAIL;
+    }
+    char path[128];
+    snprintf(path, sizeof(path), SD_REC_DIR "/%s", dec);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Datei nicht gefunden");
+        return ESP_FAIL;
+    }
+    struct stat st;
+    char len_s[16], disp[128];
+    if (stat(path, &st) == 0) {
+        snprintf(len_s, sizeof(len_s), "%ld", (long)st.st_size);
+        httpd_resp_set_hdr(req, "Content-Length", len_s);
+    }
+    snprintf(disp, sizeof(disp), "attachment; filename=\"%s\"", dec);
+    httpd_resp_set_type(req, "video/x-msvideo");
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+
+    const size_t bs = 16 * 1024;
+    char *buf = malloc(bs);
+    esp_err_t ret = ESP_OK;
+    size_t r;
+    while (buf && (r = fread(buf, 1, bs, f)) > 0) {
+        if (httpd_resp_send_chunk(req, buf, r) != ESP_OK) {
+            ret = ESP_FAIL;
+            break;
+        }
+    }
+    fclose(f);
+    free(buf);
+    if (ret == ESP_OK) {
+        httpd_resp_send_chunk(req, NULL, 0);
+    }
+    return ret;
+}
+
+static esp_err_t h_delete(httpd_req_t *req)
+{
+    char *body = read_body(req, 96);
+    if (!body || !name_ok(body) || !sdcard_ok()) {
+        free(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Ungueltiger Dateiname");
+        return ESP_FAIL;
+    }
+    if (recorder_active() && strcmp(body, recorder_last_file()) == 0) {
+        free(body);
+        httpd_resp_sendstr(req, "Aufnahme laeuft noch");
+        return ESP_OK;
+    }
+    char path[128];
+    snprintf(path, sizeof(path), SD_REC_DIR "/%s", body);
+    int r = unlink(path);
+    ESP_LOGI(TAG, "Aufnahme geloescht: %s (%s)", body, r == 0 ? "ok" : "Fehler");
+    free(body);
+    httpd_resp_sendstr(req, r == 0 ? "geloescht" : "Fehler");
+    return ESP_OK;
+}
+
+static esp_err_t h_rec_start(httpd_req_t *req)
+{
+    esp_err_t err = recorder_start_manual();
+    httpd_resp_sendstr(req, err == ESP_OK ? "Aufnahme gestartet" :
+                       "Keine Aufnahme moeglich (MicroSD-Karte oder Kamera fehlt)");
+    return ESP_OK;
+}
+
+static esp_err_t h_wifi_scan(httpd_req_t *req)
+{
+    char *out = malloc(3072);
+    if (!out) {
+        return httpd_resp_send_500(req);
+    }
+    wifi_ctrl_scan_json(out, 3072);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    free(out);
+    return ESP_OK;
+}
+
+/* Uhrzeit vom Browser uebernehmen ("<unix-sekunden>,<utc-offset-minuten>"),
+   nur solange keine gueltige Zeit (NTP) vorhanden ist */
+static esp_err_t h_settime(httpd_req_t *req)
+{
+    char *body = read_body(req, 40);
+    if (body) {
+        time_t now = time(NULL);
+        struct tm tm;
+        localtime_r(&now, &tm);
+        long long t = atoll(body);
+        if (tm.tm_year + 1900 < 2024 && t > 1700000000LL) {
+            struct timeval tv = { .tv_sec = (time_t)t };
+            settimeofday(&tv, NULL);
+            ESP_LOGI(TAG, "Uhrzeit vom Browser uebernommen");
+        }
+        free(body);
+    }
+    httpd_resp_sendstr(req, "ok");
+    return ESP_OK;
+}
+
 esp_err_t web_ui_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
+    cfg.max_uri_handlers = 16;
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
+    cfg.send_wait_timeout = 30;
     httpd_handle_t srv;
     esp_err_t err = httpd_start(&srv, &cfg);
     if (err != ESP_OK) {
@@ -343,6 +679,12 @@ esp_err_t web_ui_start(void)
     }
     const httpd_uri_t uris[] = {
         { .uri = "/", .method = HTTP_GET, .handler = h_root },
+        { .uri = "/aufnahmen", .method = HTTP_GET, .handler = h_aufnahmen },
+        { .uri = "/sd/*", .method = HTTP_GET, .handler = h_download },
+        { .uri = "/sd-loeschen", .method = HTTP_POST, .handler = h_delete },
+        { .uri = "/rec/start", .method = HTTP_POST, .handler = h_rec_start },
+        { .uri = "/api/wifi-scan", .method = HTTP_GET, .handler = h_wifi_scan },
+        { .uri = "/api/settime", .method = HTTP_POST, .handler = h_settime },
         { .uri = "/save", .method = HTTP_POST, .handler = h_save },
         { .uri = "/licht", .method = HTTP_POST, .handler = h_licht },
         { .uri = "/api/status", .method = HTTP_GET, .handler = h_status },

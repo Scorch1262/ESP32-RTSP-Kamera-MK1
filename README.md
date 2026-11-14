@@ -1,8 +1,8 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.3.1**
+**Version 1.4.0**
 
-Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**.
+Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
 ![Aufbau: Kamera → ESP32-P4-ETH / ESP32-S3-ETH → RTSP / MQTT / Webseite, GPIO → Transistor → IR-Beleuchtung](docs/aufbau.svg)
 
@@ -14,6 +14,9 @@ Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bil
 | Videoformat | **H.264** (Hardware-Encoder) | **MJPEG** (JPEG aus der Kamera, RFC 2435) |
 | Auflösung | 1280×720 @ ~14 fps | 640×480 bis 1920×1080, auf der Webseite wählbar (Standard 1280×720) |
 | Ethernet | interne EMAC + IP101 (100 Mbit/s) | W5500 über SPI |
+| WLAN | – (das Board hat keinen Funkchip) | ja: mit WLAN verbinden oder eigener Access Point |
+| MicroSD | SDIO 4-Bit | SDMMC 1-Bit |
+| Aufnahmeformat | AVI mit H.264 | AVI mit MJPEG |
 | IR-GPIO (Standard) | 20 | 17 |
 
 Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige JPEG-Bilder, die unverändert als MJPEG-Stream verschickt werden. VLC, ffmpeg, go2rtc, Frigate und OpenCV spielen beides ab. MJPEG braucht aber deutlich mehr Bandbreite als H.264: Bei 1280×720 sind es je nach JPEG-Qualität etwa 5–15 Mbit/s. Wer mehr Bilder pro Sekunde braucht, wählt eine kleinere Auflösung oder eine höhere Qualitätszahl.
@@ -26,6 +29,11 @@ Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige J
 - DHCP oder statische IP, Hostname einstellbar
 - **IR-Beleuchtung ein/aus über MQTT**, z. B. `Tuer/Kamera` = `1` / `0` (GPIO frei wählbar)
 - **Konfigurations-Webseite** unter `http://<IP-Adresse>/` (Netzwerk, MQTT-Broker, Schalt-Topic, IR-GPIO, Ein/Aus-Schalter, beim S3 auch Auflösung/Qualität) – gespeichert im NVS, kein Neukompilieren nötig
+- **Bewegungserkennung** mit einstellbarer Empfindlichkeit; Lichtwechsel (z. B. IR-Licht an/aus) werden ignoriert
+- **Aufnahme auf MicroSD** bei Bewegung, Clip-Länge einstellbar (5–600 s), älteste Aufnahmen werden bei voller Karte automatisch gelöscht (abschaltbar)
+- **Aufnahmen-Seite** zum Herunterladen und Löschen der Videos
+- **WLAN (nur ESP32-S3)**: mit vorhandenem WLAN verbinden oder eigenen Access Point öffnen, parallel zum Ethernet
+- Uhrzeit per NTP (Dateinamen mit Datum/Uhrzeit), ohne Internet wird die Uhrzeit vom Browser übernommen
 - Statusausgabe alle 10 s (fps, Bitrate, Clients, freier PSRAM) auf der seriellen Konsole
 
 Stream-URL (beide Boards):
@@ -45,6 +53,7 @@ rtsp://<IP-Adresse>:554/stream
 | PHY                 | IP101, Adresse 1                              |
 | RMII                | TXD0 34, TXD1 35, TX_EN 49, RXD0 29, RXD1 30, CRS_DV 28, REF_CLK 50 (Eingang) |
 | Kamera SCCB SCL/SDA | 8 / 7                                         |
+| MicroSD CLK / CMD / D0–D3 | 43 / 44 / 39, 40, 41, 42 (Versorgung über LDO-Kanal 4) |
 
 > Das Board ist für Raspberry-Pi-kompatible 22-Pin-Kameras (0,5 mm Raster) ausgelegt. Das OV5640-Modul muss MIPI-CSI-2 mit 2 Lanes und einen 22-Pin-Stecker haben (ggf. Adapterkabel 15→22 Pin).
 
@@ -58,6 +67,7 @@ rtsp://<IP-Adresse>:554/stream
 | Kamera XCLK / PCLK / VSYNC / HREF | 3 / 39 / 1 / 2 |
 | Kamera SIOD (SDA) / SIOC (SCL) | 48 / 47 |
 | Kamera D0 … D7 | 41, 45, 46, 42, 40, 38, 15, 18 |
+| MicroSD CLK / CMD / D0 | 7 / 6 / 5 |
 
 > GPIO8 schaltet die Spannungsversorgung der Kamera und muss Low sein, sonst wird die Kamera nicht erkannt. Die Firmware erledigt das automatisch. Das OV5640-Modul aus dem CAM-KIT und die OV2640 aus älteren Kits werden beide erkannt.
 
@@ -69,16 +79,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.4.0-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.4.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.4.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.4.0-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.4.0-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -104,6 +114,32 @@ esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.1-e
 | grün | verbunden, Stream läuft |
 | lila | verbunden, aber Kamera nicht erkannt |
 
+## WLAN (nur ESP32-S3-ETH)
+
+Auf der Webseite unter *Einstellungen → WLAN*:
+
+| Betriebsart | Verhalten |
+|---|---|
+| Aus | nur Ethernet (Standard) |
+| Mit vorhandenem WLAN verbinden | WLAN-Name und Passwort eintragen (Knopf *WLAN suchen* listet die Netze in Reichweite). Das Board bekommt per DHCP eine zweite IP-Adresse; sie steht im Status auf der Webseite und im seriellen Monitor. |
+| Eigener Access Point | Das Board öffnet ein eigenes WLAN (Name leer = `P4-RTSP-Cam-XXXX`). Passwort mit mind. 8 Zeichen = WPA2, sonst offen. Webseite dann unter `http://192.168.4.1/`. |
+
+Ethernet und WLAN laufen gleichzeitig; Webseite, RTSP-Stream und MQTT sind über beide Wege erreichbar. Startet das Board ohne Netzwerkkabel, reicht das WLAN allein.
+
+> Das **ESP32-P4-ETH** hat keinen Funkchip. WLAN gibt es bei Waveshare erst auf dem ESP32-P4-**WIFI6**-POE-ETH (mit zusätzlichem ESP32-C6) – dieses Board wird von der Firmware nicht unterstützt.
+
+## Bewegungsaufnahmen auf der MicroSD-Karte
+
+- Karte **FAT32-formatiert** einlegen (Karten über 32 GB werden meist mit exFAT ausgeliefert und müssen umformatiert werden, z. B. mit dem *SD Card Formatter* oder `guiformat`). Die Firmware formatiert nie selbst.
+- Einstellungen auf der Webseite: *Bei Bewegung aufnehmen*, *Clip-Länge* (5–600 s), *Empfindlichkeit* (1–100), *Älteste Aufnahmen automatisch löschen*.
+- Bei Bewegung startet ein Clip mit der eingestellten Länge. Hält die Bewegung an, folgt direkt der nächste Clip.
+- Dateien liegen in `/rec` auf der Karte, Namen nach Datum/Uhrzeit (`2026-11-14_18-42-07.avi`). Ohne gültige Uhrzeit heißen sie `ohne-Uhrzeit_…avi`.
+- Format: AVI – beim S3 mit MJPEG (läuft in jedem Player), beim P4 mit H.264 (VLC, Windows-Medienwiedergabe, ffmpeg).
+- *Clip jetzt aufnehmen* auf der Webseite startet eine Aufnahme sofort (zum Testen).
+- Die Aufnahmen-Seite `http://<IP>/aufnahmen` listet alle Videos (neueste zuerst) mit *Herunterladen* und *Löschen*.
+
+Bewegung und neue Aufnahmen werden zusätzlich per MQTT gemeldet (siehe unten).
+
 ## IR-Beleuchtung über MQTT schalten
 
 1. IR-LED/IR-Strahler anschließen (siehe unten), Board starten, `http://<IP>/` öffnen.
@@ -124,6 +160,8 @@ Mit `-r` (retained) übernimmt das Board den Zustand auch nach einem Neustart; o
 | `Tuer/Kamera/Status` | ← Board | aktueller Zustand `0` / `1` (retained) |
 | `Tuer/Kamera/Verfuegbar` | ← Board | `online` / `offline` (retained, Last Will) |
 | `Tuer/Kamera/Info` | ← Board | Version, IP, RTSP-URL (retained) |
+| `Tuer/Kamera/Bewegung` | ← Board | `1` bei erkannter Bewegung, `0` nach 5 s ohne Bewegung (retained) |
+| `Tuer/Kamera/Aufnahme` | ← Board | Dateiname einer neu gestarteten Aufnahme |
 
 Wird über die Webseite geschaltet, schreibt das Board den neuen Wert retained auf das Schalt-Topic, damit Broker und Board übereinstimmen.
 
@@ -156,7 +194,16 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 
 ## Webseite
 
-`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT-Verbindung), einen Ein/Aus-Schalter für die IR-Beleuchtung und die Einstellungen. Zusätzlich gibt es `GET /api/status` (JSON). Die Seite hat keinen Passwortschutz – nur im eigenen Netz betreiben.
+`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT, WLAN, Uhrzeit, MicroSD, letzte Bewegung, Aufnahme), einen Ein/Aus-Schalter für die IR-Beleuchtung, die Aufnahmen und alle Einstellungen.
+
+| Adresse | Funktion |
+|---|---|
+| `/` | Status und Einstellungen |
+| `/aufnahmen` | Liste der Videos mit Download/Löschen |
+| `/sd/<datei>` | Video direkt herunterladen (z. B. per `curl -O`) |
+| `POST /rec/start` | Clip sofort aufnehmen |
+| `POST /licht` | IR-Beleuchtung `1`/`0` |
+| `GET /api/status` | Status als JSON | Die Seite hat keinen Passwortschutz – nur im eigenen Netz betreiben.
 
 ## Selbst bauen
 
@@ -215,9 +262,12 @@ Die Firmware erkennt beim Start selbst, ob die CSI-Einheit direkt YUV420 liefern
 ## Fehlersuche
 
 - **`esp_video_init fehlgeschlagen`** (P4) – Kabel/Stecker der Kamera prüfen (Kontakte richtig herum?), SCCB-Pins im menuconfig prüfen.
-- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.3.1 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
+- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.4.0 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
 - **`W5500 antwortet nicht`** (S3) – Die Firmware versucht 20, 10 und 5 MHz SPI-Takt. Antwortet der Chip bei keinem davon, ist er nicht erreichbar (Stromversorgung bzw. PoE-Modul prüfen).
 - **`esp_camera_init: ESP_ERR_NOT_FOUND`** (S3) – Kamera nicht erkannt: Flachbandkabel richtig herum eingesteckt? Board einmal stromlos machen.
+- **„Keine MicroSD-Karte“ / „kein FAT-Dateisystem“** – Karte als FAT32 formatieren, einlegen, Board neu starten.
+- **„SD-Karte zu langsam, Bild verworfen“** – schnellere Karte (Class 10 / U1 oder besser) verwenden oder beim S3 die Auflösung verringern.
+- **WLAN verbindet nicht** – Status auf der Webseite zeigt den Grund (z. B. Grund 15/202 = falsches Passwort, 201 = WLAN nicht gefunden). Der ESP32-S3 kann nur 2,4 GHz.
 - **Stream ruckelt beim S3** – Auflösung verkleinern oder JPEG-Qualitätszahl erhöhen (z. B. 15–20); über TCP abrufen.
 - **Kein Link** – Kabel/Switch prüfen; beim P4 mit anderem PHY im menuconfig „Generischer IEEE-802.3-PHY“ und PHY-Adresse `-1` (Autosuche) wählen.
 - **Ruckeln über UDP** – Client auf TCP umstellen (`-rtsp_transport tcp`, VLC: „RTP über RTSP (TCP)“).
@@ -235,10 +285,15 @@ main/
   rtsp_server.c   RTSP-Server, RTP-Paketierung H.264 (RFC 6184) und MJPEG (RFC 2435)
   ir_light.c      Schaltausgang der IR-Beleuchtung
   status_led.c    WS2812-Status-LED (S3: GPIO21)
+  wifi_ctrl.c     WLAN-Client / Access Point (S3), Netzsuche
+  sdcard.c        MicroSD-Karte (S3: SDMMC 1-Bit, P4: SDIO 4-Bit)
+  motion.c        Bewegungserkennung auf verkleinertem Graustufenbild
+  recorder.c      AVI-Aufnahmen mit eigenem Schreib-Task, Speicherverwaltung
   mqtt_ctrl.c     MQTT-Client: <topic> = 0/1, Status/Verfuegbar/Info
   web_ui.c        Konfigurations-Webseite, /licht, /api/status
   app_config.c    Einstellungen im NVS
   Kconfig.projbuild
 sdkconfig.defaults(.esp32p4/.esp32s3)  gemeinsame und zielabhängige Einstellungen
+partitions.csv  Partitionstabelle (4 MB für die Firmware)
 .github/workflows/build.yml   Firmware für ESP32-S3 und beide P4-Chip-Revisionen, Release bei Tag v*
 ```

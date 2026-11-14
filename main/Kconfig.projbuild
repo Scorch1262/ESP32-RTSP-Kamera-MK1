@@ -220,6 +220,25 @@ menu "P4-ETH-RTSP-Cam-MK1"
             default 39
     endmenu
 
+    menu "MicroSD-Karte"
+        config APP_SD_CLK
+            int "SD CLK (ESP32-S3)"
+            depends on IDF_TARGET_ESP32S3
+            default 7
+        config APP_SD_CMD
+            int "SD CMD (ESP32-S3)"
+            depends on IDF_TARGET_ESP32S3
+            default 6
+        config APP_SD_D0
+            int "SD D0 (ESP32-S3)"
+            depends on IDF_TARGET_ESP32S3
+            default 5
+        config APP_SD_LDO_CHAN
+            int "LDO-Kanal der SD-Versorgung (ESP32-P4)"
+            depends on IDF_TARGET_ESP32P4
+            default 4
+    endmenu
+
     menu "Status"
         config APP_STATUS_LED_GPIO
             int "GPIO der RGB-Status-LED (WS2812, -1 = keine)"
