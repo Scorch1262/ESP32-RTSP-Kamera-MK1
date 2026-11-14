@@ -1,0 +1,6 @@
+dependencies:
+  idf: ">=5.4,<6.0"
+  # V4L2-Kameraframework inkl. MIPI-CSI-Treiber und OV5640-Sensortreiber (esp_cam_sensor)
+  espressif/esp_video: "~2.6.0"
+  # Hardware-H.264-Encoder des ESP32-P4 (Version passend zu esp_video 2.6)
+  espressif/esp_h264: "1.4.*"

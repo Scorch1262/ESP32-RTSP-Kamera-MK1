@@ -1,0 +1,135 @@
+menu "P4-ETH-RTSP-Cam-MK1"
+
+    menu "Ethernet"
+        choice APP_ETH_PHY
+            prompt "Ethernet-PHY"
+            default APP_ETH_PHY_IP101
+            config APP_ETH_PHY_IP101
+                bool "IP101 (Standard bei Waveshare ESP32-P4-Boards)"
+            config APP_ETH_PHY_GENERIC
+                bool "Generischer IEEE-802.3-PHY"
+        endchoice
+
+        config APP_ETH_PHY_ADDR
+            int "PHY-Adresse"
+            range -1 31
+            default 1
+            help
+                -1 = automatische Suche.
+
+        config APP_ETH_PHY_RST_GPIO
+            int "PHY-Reset-GPIO"
+            range -1 54
+            default 51
+
+        config APP_ETH_MDC_GPIO
+            int "SMI MDC GPIO"
+            default 31
+
+        config APP_ETH_MDIO_GPIO
+            int "SMI MDIO GPIO"
+            default 52
+
+        config APP_HOSTNAME
+            string "Hostname"
+            default "p4-rtsp-cam"
+
+        config APP_USE_STATIC_IP
+            bool "Statische IP-Adresse statt DHCP"
+            default n
+
+        config APP_STATIC_IP
+            string "IP-Adresse"
+            depends on APP_USE_STATIC_IP
+            default "192.168.1.60"
+
+        config APP_STATIC_NETMASK
+            string "Netzmaske"
+            depends on APP_USE_STATIC_IP
+            default "255.255.255.0"
+
+        config APP_STATIC_GW
+            string "Gateway"
+            depends on APP_USE_STATIC_IP
+            default "192.168.1.1"
+    endmenu
+
+    menu "Kamera (OV5640, MIPI-CSI)"
+        config APP_CAM_SCCB_PORT
+            int "SCCB/I2C-Port"
+            default 0
+
+        config APP_CAM_SCCB_SCL_GPIO
+            int "SCCB SCL GPIO"
+            default 8
+
+        config APP_CAM_SCCB_SDA_GPIO
+            int "SCCB SDA GPIO"
+            default 7
+
+        config APP_CAM_SCCB_FREQ
+            int "SCCB-Takt (Hz)"
+            default 100000
+
+        config APP_CAM_RESET_GPIO
+            int "Sensor-Reset-GPIO (-1 = keiner)"
+            default -1
+
+        config APP_CAM_PWDN_GPIO
+            int "Sensor-Powerdown-GPIO (-1 = keiner)"
+            default -1
+
+        config APP_CAM_FPS
+            int "Bildrate des Sensors (fps, fuer Encoder-Ratensteuerung)"
+            range 1 60
+            default 14
+            help
+                Der OV5640-Treiber liefert ueber MIPI-CSI 1280x720 bei 14 fps.
+    endmenu
+
+    menu "H.264-Encoder"
+        config APP_H264_BITRATE
+            int "Ziel-Bitrate (bit/s)"
+            range 100000 20000000
+            default 2500000
+
+        config APP_H264_GOP
+            int "GOP-Laenge (Abstand der IDR-Frames)"
+            range 1 255
+            default 28
+
+        config APP_H264_QP_MIN
+            int "QP minimal"
+            range 0 51
+            default 20
+
+        config APP_H264_QP_MAX
+            int "QP maximal"
+            range 0 51
+            default 38
+    endmenu
+
+    menu "RTSP-Server"
+        config APP_RTSP_PORT
+            int "RTSP-Port"
+            range 1 65535
+            default 554
+
+        config APP_RTSP_PATH
+            string "Stream-Pfad"
+            default "stream"
+            help
+                URL: rtsp://<IP>:<Port>/<Pfad>
+
+        config APP_RTSP_MAX_CLIENTS
+            int "Maximale gleichzeitige Clients"
+            range 1 8
+            default 4
+
+        config APP_RTP_MAX_PAYLOAD
+            int "Maximale RTP-Nutzlast (Byte)"
+            range 500 1460
+            default 1400
+    endmenu
+
+endmenu

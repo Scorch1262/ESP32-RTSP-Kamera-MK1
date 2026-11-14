@@ -1,0 +1,5 @@
+# Nur fuer aeltere ESP32-P4-Chips (Revision v0.x / v1.x)!
+# Verwendung:  idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.rev_v1" build
+# Chip-Revision anzeigen:  esptool.py --chip esp32p4 chip_id
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_1=y
