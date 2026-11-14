@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.3.0**
+**Version 1.3.1**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**.
 
@@ -69,21 +69,40 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.3.0-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.3.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.3.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.0-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.0-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.3.1-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
 
 > UF2-Dateien gibt es für beide Boards nicht: Die Chips haben ab Werk keinen UF2-Bootloader (kein „Laufwerk zum Draufkopieren“ wie beim RP2040).
+
+## IP-Adresse finden
+
+1. **Router:** Das Board meldet sich per DHCP mit dem Hostnamen `p4-rtsp-cam` (auf der Webseite änderbar).
+2. **Serieller Monitor:** Board per USB-C anschließen, Terminal mit 115200 Baud öffnen (z. B. esptool-js → *Console*, PuTTY, Arduino Serial Monitor, `idf.py monitor`). Alle 15 s erscheint eine Zeile wie
+   ```
+   I (15234) main: Status: verbunden | IP 192.168.1.57 | Web http://192.168.1.57/ | Stream rtsp://192.168.1.57:554/stream
+   ```
+   Vorher das Browser-Fenster von esptool-js schließen, sonst ist der Port noch belegt.
+3. **Status-LED (ESP32-S3-ETH, RGB-LED an GPIO21):**
+
+| LED | Bedeutung |
+|---|---|
+| blau | Start |
+| rot blinkend | Ethernet-Chip (W5500) nicht gefunden |
+| orange | kein Link – Netzwerkkabel/Switch prüfen |
+| gelb blinkend | Link OK, warte auf IP-Adresse (DHCP) |
+| grün | verbunden, Stream läuft |
+| lila | verbunden, aber Kamera nicht erkannt |
 
 ## IR-Beleuchtung über MQTT schalten
 
@@ -182,7 +201,8 @@ Die Firmware erkennt beim Start selbst, ob die CSI-Einheit direkt YUV420 liefern
 | Menü | Option | Standard |
 |---|---|---|
 | Ethernet (P4) | PHY-Typ / Adresse / Reset-GPIO | IP101 / 1 / 51 |
-| Ethernet (S3) | W5500-Pins / SPI-Takt | siehe Tabelle oben / 36 MHz |
+| Ethernet (S3) | W5500-Pins / SPI-Takt | siehe Tabelle oben / 20 MHz |
+| Status | RGB-LED-GPIO / Statusausgabe | 21 (S3), keine (P4) / alle 15 s |
 | Ethernet | Statische IP | aus (DHCP) |
 | Kamera (P4) | SCCB-Pins, Reset/PWDN | 8 / 7, keine |
 | Kamera (S3) | Auflösung / JPEG-Qualität / Spiegeln / alle DVP-Pins | 1280×720 / 12 / aus |
@@ -195,6 +215,8 @@ Die Firmware erkennt beim Start selbst, ob die CSI-Einheit direkt YUV420 liefern
 ## Fehlersuche
 
 - **`esp_video_init fehlgeschlagen`** (P4) – Kabel/Stecker der Kamera prüfen (Kontakte richtig herum?), SCCB-Pins im menuconfig prüfen.
+- **Terminal trennt sofort / Board taucht im Router nicht auf** – Das Board startet vermutlich ständig neu. Ab v1.3.1 läuft es auch bei Netzwerk- oder Kamerafehlern weiter, wartet nach einem Absturz 10 s und zeigt die Ursache im seriellen Monitor. Status-LED beachten (siehe „IP-Adresse finden“).
+- **`W5500 antwortet nicht`** (S3) – Die Firmware versucht 20, 10 und 5 MHz SPI-Takt. Antwortet der Chip bei keinem davon, ist er nicht erreichbar (Stromversorgung bzw. PoE-Modul prüfen).
 - **`esp_camera_init: ESP_ERR_NOT_FOUND`** (S3) – Kamera nicht erkannt: Flachbandkabel richtig herum eingesteckt? Board einmal stromlos machen.
 - **Stream ruckelt beim S3** – Auflösung verkleinern oder JPEG-Qualitätszahl erhöhen (z. B. 15–20); über TCP abrufen.
 - **Kein Link** – Kabel/Switch prüfen; beim P4 mit anderem PHY im menuconfig „Generischer IEEE-802.3-PHY“ und PHY-Adresse `-1` (Autosuche) wählen.
@@ -212,6 +234,7 @@ main/
   video_s3.c      S3: OV5640/OV2640 via esp32-camera, JPEG -> RTSP
   rtsp_server.c   RTSP-Server, RTP-Paketierung H.264 (RFC 6184) und MJPEG (RFC 2435)
   ir_light.c      Schaltausgang der IR-Beleuchtung
+  status_led.c    WS2812-Status-LED (S3: GPIO21)
   mqtt_ctrl.c     MQTT-Client: <topic> = 0/1, Status/Verfuegbar/Info
   web_ui.c        Konfigurations-Webseite, /licht, /api/status
   app_config.c    Einstellungen im NVS

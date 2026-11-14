@@ -38,8 +38,8 @@ menu "P4-ETH-RTSP-Cam-MK1"
         config APP_W5500_SPI_MHZ
             int "W5500 SPI-Takt (MHz)"
             depends on IDF_TARGET_ESP32S3
-            range 8 80
-            default 36
+            range 5 80
+            default 20
 
         config APP_W5500_MOSI
             int "W5500 MOSI"
@@ -218,6 +218,17 @@ menu "P4-ETH-RTSP-Cam-MK1"
         config APP_S3_CAM_PCLK
             int "PCLK"
             default 39
+    endmenu
+
+    menu "Status"
+        config APP_STATUS_LED_GPIO
+            int "GPIO der RGB-Status-LED (WS2812, -1 = keine)"
+            default 21 if IDF_TARGET_ESP32S3
+            default -1
+
+        config APP_STATUS_LOG_INTERVAL_S
+            int "Status-Ausgabe auf der Konsole alle ... Sekunden"
+            default 15
     endmenu
 
     menu "RTSP-Server"

@@ -28,6 +28,7 @@ static const char *TAG = "eth";
 static EventGroupHandle_t s_evt;
 static esp_netif_t *s_netif;
 static char s_ip[16];
+static volatile eth_state_t s_state = ETH_STATE_ERROR;
 
 static void eth_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -36,11 +37,13 @@ static void eth_event_handler(void *arg, esp_event_base_t base, int32_t id, void
 
     switch (id) {
     case ETHERNET_EVENT_CONNECTED:
+        s_state = ETH_STATE_LINK_UP;
         esp_eth_ioctl(eth, ETH_CMD_G_MAC_ADDR, mac);
         ESP_LOGI(TAG, "Link up  (MAC %02x:%02x:%02x:%02x:%02x:%02x)",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         break;
     case ETHERNET_EVENT_DISCONNECTED:
+        s_state = ETH_STATE_NO_LINK;
         ESP_LOGW(TAG, "Link down");
         xEventGroupClearBits(s_evt, ETH_GOT_IP_BIT);
         break;
@@ -61,6 +64,7 @@ static void got_ip_handler(void *arg, esp_event_base_t base, int32_t id, void *d
     snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&ev->ip_info.ip));
     ESP_LOGI(TAG, "IP-Adresse: %s  Maske: " IPSTR "  GW: " IPSTR,
              s_ip, IP2STR(&ev->ip_info.netmask), IP2STR(&ev->ip_info.gw));
+    s_state = ETH_STATE_GOT_IP;
     xEventGroupSetBits(s_evt, ETH_GOT_IP_BIT);
 }
 
@@ -108,9 +112,18 @@ esp_err_t eth_start(const app_config_t *cfg)
 #endif
     ESP_RETURN_ON_FALSE(phy, ESP_FAIL, TAG, "PHY konnte nicht angelegt werden");
 
+    esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
+    static esp_eth_handle_t eth_handle = NULL;
+    ESP_RETURN_ON_ERROR(esp_eth_driver_install(&eth_config, &eth_handle), TAG, "Treiberinstallation");
+
 #else
-    /* W5500 ueber SPI */
-    ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), TAG, "GPIO-ISR-Dienst");
+    /* W5500 ueber SPI. Waveshare betreibt den Bus mit 20 MHz; klappt die Erkennung
+       nicht, wird es mit 10 MHz erneut versucht. */
+    esp_err_t gerr = gpio_install_isr_service(0);
+    if (gerr != ESP_OK && gerr != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "GPIO-ISR-Dienst: %s", esp_err_to_name(gerr));
+        return gerr;
+    }
     spi_bus_config_t bus = {
         .mosi_io_num = CONFIG_APP_W5500_MOSI,
         .miso_io_num = CONFIG_APP_W5500_MISO,
@@ -119,36 +132,62 @@ esp_err_t eth_start(const app_config_t *cfg)
         .quadhd_io_num = -1,
     };
     ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "SPI-Bus");
-    spi_device_interface_config_t dev = {
-        .mode = 0,
-        .clock_speed_hz = CONFIG_APP_W5500_SPI_MHZ * 1000 * 1000,
-        .queue_size = 20,
-        .spics_io_num = CONFIG_APP_W5500_CS,
-    };
-    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(SPI2_HOST, &dev);
-    w5500_config.int_gpio_num = CONFIG_APP_W5500_INT;
 
-    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
-    mac_config.rx_task_stack_size = 4096;
-    mac_config.rx_task_prio = 18;
-    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
-    ESP_RETURN_ON_FALSE(mac, ESP_FAIL, TAG, "W5500-MAC konnte nicht angelegt werden");
-
-    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
-    phy_config.reset_gpio_num = CONFIG_APP_W5500_RST;
-    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
-    ESP_RETURN_ON_FALSE(phy, ESP_FAIL, TAG, "W5500-PHY konnte nicht angelegt werden");
-
-#endif
-
-    esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     static esp_eth_handle_t eth_handle = NULL;
-    ESP_RETURN_ON_ERROR(esp_eth_driver_install(&eth_config, &eth_handle), TAG, "Treiberinstallation");
-#if !CONFIG_IDF_TARGET_ESP32P4
+    const int speeds[] = { CONFIG_APP_W5500_SPI_MHZ, 10, 5 };
+    esp_err_t ierr = ESP_FAIL;
+    for (int i = 0; i < 3 && eth_handle == NULL; i++) {
+        if (i > 0 && speeds[i] >= speeds[i - 1]) {
+            continue;
+        }
+        ESP_LOGI(TAG, "W5500 an SPI2 (MOSI %d, MISO %d, SCLK %d, CS %d, INT %d, RST %d) mit %d MHz",
+                 CONFIG_APP_W5500_MOSI, CONFIG_APP_W5500_MISO, CONFIG_APP_W5500_SCLK,
+                 CONFIG_APP_W5500_CS, CONFIG_APP_W5500_INT, CONFIG_APP_W5500_RST, speeds[i]);
+        spi_device_interface_config_t dev = {
+            .mode = 0,
+            .clock_speed_hz = speeds[i] * 1000 * 1000,
+            .queue_size = 20,
+            .spics_io_num = CONFIG_APP_W5500_CS,
+        };
+        eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(SPI2_HOST, &dev);
+        w5500_config.int_gpio_num = CONFIG_APP_W5500_INT;
+
+        eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+        mac_config.rx_task_stack_size = 4096;
+        esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+        eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+        phy_config.reset_gpio_num = CONFIG_APP_W5500_RST;
+        esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
+        if (!mac || !phy) {
+            ESP_LOGE(TAG, "W5500-Treiber konnte nicht angelegt werden");
+            if (mac) {
+                mac->del(mac);
+            }
+            if (phy) {
+                phy->del(phy);
+            }
+            continue;
+        }
+        esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
+        ierr = esp_eth_driver_install(&eth_config, &eth_handle);
+        if (ierr != ESP_OK) {
+            ESP_LOGE(TAG, "W5500 antwortet nicht (%s)", esp_err_to_name(ierr));
+            eth_handle = NULL;
+            mac->del(mac);
+            phy->del(phy);
+        }
+    }
+    if (!eth_handle) {
+        ESP_LOGE(TAG, "W5500 nicht gefunden - Ethernet nicht verfuegbar");
+        return ierr;
+    }
+
     /* Der W5500 hat keine eigene MAC-Adresse - die Ethernet-MAC des ESP32-S3 verwenden */
     uint8_t mac_addr[6];
     esp_read_mac(mac_addr, ESP_MAC_ETH);
     esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, mac_addr);
+    ESP_LOGI(TAG, "W5500 erkannt, MAC %02x:%02x:%02x:%02x:%02x:%02x",
+             mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 #endif
 
     ESP_RETURN_ON_ERROR(esp_netif_attach(s_netif, esp_eth_new_netif_glue(eth_handle)), TAG, "netif attach");
@@ -156,11 +195,29 @@ esp_err_t eth_start(const app_config_t *cfg)
     ESP_RETURN_ON_ERROR(esp_event_handler_register(ETH_EVENT, ESP_EVENT_ANY_ID, eth_event_handler, NULL), TAG, "ETH-Events");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_GOT_IP, got_ip_handler, NULL), TAG, "IP-Events");
 
-    return esp_eth_start(eth_handle);
+    esp_err_t err = esp_eth_start(eth_handle);
+    if (err == ESP_OK) {
+        s_state = ETH_STATE_NO_LINK;
+    }
+    return err;
+}
+
+eth_state_t eth_get_state(void)
+{
+    return s_state;
+}
+
+const char *eth_get_ip(void)
+{
+    return s_state == ETH_STATE_GOT_IP ? s_ip : NULL;
 }
 
 bool eth_wait_for_ip(TickType_t timeout, char *ip_out, size_t ip_out_len)
 {
+    if (!s_evt) {
+        vTaskDelay(timeout);
+        return false;
+    }
     EventBits_t bits = xEventGroupWaitBits(s_evt, ETH_GOT_IP_BIT, pdFALSE, pdTRUE, timeout);
     if ((bits & ETH_GOT_IP_BIT) && ip_out && ip_out_len) {
         strlcpy(ip_out, s_ip, ip_out_len);

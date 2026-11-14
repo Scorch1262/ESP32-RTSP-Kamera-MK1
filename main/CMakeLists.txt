@@ -1,6 +1,6 @@
-set(srcs "main.c" "eth_init.c" "rtsp_server.c" "app_config.c" "ir_light.c" "mqtt_ctrl.c" "web_ui.c")
+set(srcs "main.c" "eth_init.c" "rtsp_server.c" "app_config.c" "ir_light.c" "mqtt_ctrl.c" "web_ui.c" "status_led.c")
 set(reqs esp_eth esp_netif esp_event esp_timer mbedtls lwip esp_app_format nvs_flash mqtt json
-         esp_http_server esp_driver_gpio)
+         esp_http_server esp_driver_gpio esp_driver_rmt)
 
 if(IDF_TARGET STREQUAL "esp32p4")
     list(APPEND srcs "video_p4.c" "camera.c")
