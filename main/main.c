@@ -23,7 +23,7 @@
 #include "camera.h"
 #include "rtsp_server.h"
 #include "app_config.h"
-#include "ir_tx.h"
+#include "ir_light.h"
 #include "mqtt_ctrl.h"
 #include "web_ui.h"
 #include "sdkconfig.h"
@@ -131,8 +131,8 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(eth_start(&g_cfg));
 
-    if (ir_tx_init(g_cfg.ir_gpio) != ESP_OK) {
-        ESP_LOGE(TAG, "IR-Sender an GPIO %d konnte nicht gestartet werden", g_cfg.ir_gpio);
+    if (ir_light_init(g_cfg.ir_gpio, g_cfg.ir_active_low) != ESP_OK) {
+        ESP_LOGE(TAG, "IR-Beleuchtung an GPIO %d konnte nicht eingerichtet werden", g_cfg.ir_gpio);
     }
 
     bool cam_ok = false;
@@ -170,7 +170,7 @@ void app_main(void)
         ESP_LOGI(TAG, " Stream:   rtsp://%s:%d/%s", ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH);
     }
     if (g_cfg.mqtt_uri[0]) {
-        ESP_LOGI(TAG, " IR-Topic: %s/ir/send", g_cfg.mqtt_topic);
+        ESP_LOGI(TAG, " IR-Licht: %s = 0/1", g_cfg.mqtt_topic);
     }
     ESP_LOGI(TAG, "==============================================");
 }

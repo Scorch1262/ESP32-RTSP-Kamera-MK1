@@ -1,14 +1,15 @@
 /*
- * Konfigurations-Webseite: Netzwerk, MQTT, IR-GPIO + IR-Testsender.
+ * Konfigurations-Webseite: Netzwerk, MQTT, IR-Beleuchtung (Schalter + Einstellungen).
  */
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <strings.h>
 #include <stdarg.h>
 #include "web_ui.h"
 #include "app_config.h"
-#include "ir_tx.h"
+#include "ir_light.h"
 #include "mqtt_ctrl.h"
 #include "rtsp_server.h"
 #include "esp_http_server.h"
@@ -144,27 +145,27 @@ static esp_err_t h_root(httpd_req_t *req)
              "<tr><td>RTSP-Stream</td><td><code>rtsp://%s:%d/%s</code></td></tr>"
              "<tr><td>RTSP-Clients</td><td>%d</td></tr>"
              "<tr><td>MQTT</td><td class=%s>%s</td></tr>"
-             "<tr><td>IR-Befehl-Topic</td><td><code>%s/ir/send</code></td></tr>"
-             "<tr><td>IR-GPIO</td><td>%s%d</td></tr>"
-             "<tr><td>IR gesendet</td><td>%u</td></tr>"
+             "<tr><td>Schalt-Topic</td><td><code>%s</code> = 0 / 1</td></tr>"
+             "<tr><td>IR-GPIO</td><td>%s%d%s</td></tr>"
              "<tr><td>Laufzeit</td><td>%lld min</td></tr>"
              "</table></div>",
              s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
              rtsp_server_active_clients(),
              c->mqtt_uri[0] == 0 ? "bad" : (mqtt_ctrl_connected() ? "ok" : "bad"),
              c->mqtt_uri[0] == 0 ? "nicht konfiguriert" : (mqtt_ctrl_connected() ? "verbunden" : "nicht verbunden"),
-             c->mqtt_topic, c->ir_gpio < 0 ? "aus " : "", c->ir_gpio, ir_tx_count(),
+             c->mqtt_topic, c->ir_gpio < 0 ? "aus " : "", c->ir_gpio, c->ir_active_low ? " (Low-aktiv)" : "",
              esp_timer_get_time() / 60000000LL);
 
-    /* IR-Test */
-    httpd_resp_sendstr_chunk(req,
-        "<div class=card><h2>IR-Befehl testen</h2>"
-        "<label>JSON (gleiches Format wie per MQTT)</label>"
-        "<textarea id=irj>{\"protocol\":\"NEC\",\"address\":\"0x04\",\"command\":\"0x08\"}</textarea>"
-        "<button onclick=sendIr()>Senden</button><div id=res></div></div>"
-        "<script>function sendIr(){var r=document.getElementById('res');r.textContent='...';"
-        "fetch('/ir',{method:'POST',body:document.getElementById('irj').value}).then(x=>x.json())"
-        ".then(j=>{r.className=j.ok?'ok':'bad';r.textContent=j.message}).catch(e=>{r.className='bad';r.textContent=e})}</script>");
+    /* IR-Beleuchtung */
+    send_fmt(req,
+        "<div class=card><h2>IR-Beleuchtung</h2>"
+        "<div style='display:flex;align-items:center;gap:16px'>"
+        "<span id=st class=%s style='font-size:22px;font-weight:600'>%s</span>"
+        "<button onclick=sw(1)>Ein</button><button class=sec onclick=sw(0)>Aus</button></div>%s</div>"
+        "<script>function sw(v){fetch('/licht',{method:'POST',body:String(v)}).then(x=>x.json())"
+        ".then(j=>{var e=document.getElementById('st');e.textContent=j.on?'EIN':'AUS';e.className=j.on?'ok':'bad'})}</script>",
+        ir_light_get() ? "ok" : "bad", ir_light_get() ? "EIN" : "AUS",
+        ir_light_available() ? "" : "<p class=bad>Kein GPIO konfiguriert - Ausgang inaktiv.</p>");
 
     /* Konfiguration */
     httpd_resp_sendstr_chunk(req, "<form class=card method=post action=/save><h2>Einstellungen</h2>");
@@ -185,10 +186,12 @@ static esp_err_t h_root(httpd_req_t *req)
              "<div class=row><div><label>Benutzer</label><input name=mqtt_user value=\"%s\" maxlength=63></div>"
              "<div><label>Passwort (leer = unveraendert)</label><input type=password name=mqtt_pass maxlength=63></div></div>"
              "<label><input type=checkbox name=mqtt_pass_clear value=1 style='width:auto'> Passwort loeschen</label>"
-             "<label>Basis-Topic</label><input name=mqtt_topic value=\"%s\" maxlength=63>"
-             "<label>GPIO der IR-LED (-1 = aus)</label><input name=ir_gpio type=number min=-1 max=54 value=%d>"
+             "<label>Schalt-Topic der IR-Beleuchtung (Nutzlast 0 = aus, 1 = ein)</label>"
+             "<input name=mqtt_topic value=\"%s\" maxlength=63>"
+             "<label>GPIO der IR-Beleuchtung (-1 = aus)</label><input name=ir_gpio type=number min=-1 max=54 value=%d>"
+             "<label><input type=checkbox name=ir_active_low value=1 style='width:auto' %s> Ausgang Low-aktiv (Low = ein)</label>"
              "<button type=submit>Speichern &amp; Neustart</button></form>",
-             e1, e2, e3, c->ir_gpio);
+             e1, e2, e3, c->ir_gpio, c->ir_active_low ? "checked" : "");
 
     httpd_resp_sendstr_chunk(req, "</body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
@@ -245,6 +248,7 @@ static esp_err_t h_save(httpd_req_t *req)
         int g = atoi(v);
         c.ir_gpio = (g < -1 || g > 54) ? -1 : g;
     }
+    c.ir_active_low = form_get(body, "ir_active_low", v, sizeof(v));
     free(body);
 
     esp_err_t err = config_save(&c);
@@ -264,28 +268,30 @@ static esp_err_t h_save(httpd_req_t *req)
     return ESP_OK;
 }
 
-static esp_err_t h_ir(httpd_req_t *req)
+static esp_err_t h_licht(httpd_req_t *req)
 {
-    char *body = read_body(req, 8192);
+    char *body = read_body(req, 64);
     if (!body) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Leerer oder zu grosser Inhalt");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Erwartet 0, 1 oder toggle");
         return ESP_FAIL;
     }
-    char result[160];
-    esp_err_t err = ir_tx_send_json(body, result, sizeof(result));
-    free(body);
-
-    char out[256], esc[200];
-    /* JSON-Escape fuer Anfuehrungszeichen/Backslash */
-    size_t o = 0;
-    for (const char *p = result; *p && o + 2 < sizeof(esc); p++) {
-        if (*p == '"' || *p == '\\') {
-            esc[o++] = '\\';
-        }
-        esc[o++] = *p;
+    bool on = ir_light_get();
+    bool ok = true;
+    if (body[0] == '1' || !strcasecmp(body, "on") || !strcasecmp(body, "ein")) {
+        on = true;
+    } else if (body[0] == '0' || !strcasecmp(body, "off") || !strcasecmp(body, "aus")) {
+        on = false;
+    } else if (!strcasecmp(body, "toggle")) {
+        on = !on;
+    } else {
+        ok = false;
     }
-    esc[o] = 0;
-    snprintf(out, sizeof(out), "{\"ok\":%s,\"message\":\"%s\"}", err == ESP_OK ? "true" : "false", esc);
+    free(body);
+    if (ok) {
+        mqtt_ctrl_set_light(on);
+    }
+    char out[48];
+    snprintf(out, sizeof(out), "{\"ok\":%s,\"on\":%s}", ok ? "true" : "false", ir_light_get() ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, out);
 }
@@ -295,10 +301,10 @@ static esp_err_t h_status(httpd_req_t *req)
     char out[320];
     snprintf(out, sizeof(out),
              "{\"version\":\"%s\",\"ip\":\"%s\",\"rtsp\":\"rtsp://%s:%d/%s\",\"rtsp_clients\":%d,"
-             "\"mqtt\":%s,\"ir_gpio\":%d,\"ir_sent\":%u}",
+             "\"mqtt\":%s,\"ir_gpio\":%d,\"ir_licht\":%d}",
              esp_app_get_description()->version, s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
              rtsp_server_active_clients(), mqtt_ctrl_connected() ? "true" : "false",
-             g_cfg.ir_gpio, ir_tx_count());
+             g_cfg.ir_gpio, ir_light_get() ? 1 : 0);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, out);
 }
@@ -317,7 +323,7 @@ esp_err_t web_ui_start(void)
     const httpd_uri_t uris[] = {
         { .uri = "/", .method = HTTP_GET, .handler = h_root },
         { .uri = "/save", .method = HTTP_POST, .handler = h_save },
-        { .uri = "/ir", .method = HTTP_POST, .handler = h_ir },
+        { .uri = "/licht", .method = HTTP_POST, .handler = h_licht },
         { .uri = "/api/status", .method = HTTP_GET, .handler = h_status },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

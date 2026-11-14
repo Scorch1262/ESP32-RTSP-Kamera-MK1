@@ -9,7 +9,7 @@ static const char *TAG = "config";
 
 #define CFG_NS      "p4cam"
 #define CFG_KEY     "cfg"
-#define CFG_MAGIC   0x50344331u  /* "P4C1" */
+#define CFG_MAGIC   0x50344332u  /* "P4C2" */
 
 typedef struct {
     uint32_t magic;
@@ -35,6 +35,9 @@ static void set_defaults(app_config_t *c)
     strlcpy(c->mqtt_uri, CONFIG_APP_MQTT_URI, sizeof(c->mqtt_uri));
     strlcpy(c->mqtt_topic, CONFIG_APP_MQTT_TOPIC, sizeof(c->mqtt_topic));
     c->ir_gpio = CONFIG_APP_IR_GPIO;
+#if CONFIG_APP_IR_ACTIVE_LOW
+    c->ir_active_low = true;
+#endif
 }
 
 void config_load(app_config_t *cfg)

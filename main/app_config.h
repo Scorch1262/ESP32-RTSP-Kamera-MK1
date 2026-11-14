@@ -14,9 +14,10 @@ typedef struct {
     char mqtt_uri[128];     /* z. B. mqtt://192.168.1.10:1883 – leer = MQTT aus */
     char mqtt_user[64];
     char mqtt_pass[64];
-    char mqtt_topic[64];    /* Basis-Topic, z. B. p4cam */
+    char mqtt_topic[64];    /* Schalt-Topic der IR-Beleuchtung, z. B. Tuer/Kamera */
 
-    int  ir_gpio;           /* GPIO der IR-LED, -1 = IR aus */
+    int  ir_gpio;           /* GPIO der IR-Beleuchtung, -1 = aus */
+    bool ir_active_low;     /* true: Ausgang Low = Beleuchtung ein */
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */
