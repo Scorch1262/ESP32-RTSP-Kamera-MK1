@@ -44,6 +44,8 @@ static uint8_t *s_mjpeg;
 static size_t s_mjpeg_len;
 static volatile bool s_motion_busy;
 static SemaphoreHandle_t s_motion_sem;
+static unsigned s_decode_errors, s_decode_ok;
+static int64_t s_last_err_log;
 
 static void motion_task(void *arg)
 {
@@ -72,7 +74,19 @@ static void motion_task(void *arg)
                 jc.outbuf_size = rgb_cap;
                 jc.indata = s_mjpeg;
                 jc.indata_size = s_mjpeg_len;
-                if (esp_jpeg_decode(&jc, &info) == ESP_OK) {
+                esp_err_t derr = esp_jpeg_decode(&jc, &info);
+                if (derr != ESP_OK) {
+                    s_decode_errors++;
+                    int64_t now = esp_timer_get_time();
+                    if (now - s_last_err_log > 60LL * 1000000) {
+                        s_last_err_log = now;
+                        bool has_dht = memmem(s_mjpeg, s_mjpeg_len, "\xFF\xC4", 2) != NULL;
+                        bool has_dri = memmem(s_mjpeg, s_mjpeg_len, "\xFF\xDD", 2) != NULL;
+                        ESP_LOGW(TAG, "Bewegungserkennung: JPEG nicht dekodierbar (%s, bisher %u Fehler, "
+                                 "Huffman-Tabellen %s, Restart-Marker %s)", esp_err_to_name(derr),
+                                 s_decode_errors, has_dht ? "ja" : "nein", has_dri ? "ja" : "nein");
+                    }
+                } else {
                     int n = info.width * info.height;
                     for (int i = 0; i < n; i++) {
                         const uint8_t *p = rgb + i * 3;
@@ -81,6 +95,7 @@ static void motion_task(void *arg)
                     if (motion_feed(gray, info.width, info.height, g_cfg.motion_sens)) {
                         recorder_motion();
                     }
+                    s_decode_ok++;
                 }
             }
         }
@@ -237,6 +252,8 @@ esp_err_t video_init(video_info_t *info)
 
 void video_start(void)
 {
+    /* Fehlermeldungen des JPEG-Dekoders selbst unterdruecken - eigene, gedrosselte Meldung */
+    esp_log_level_set("JPEG", ESP_LOG_NONE);
     s_mjpeg = heap_caps_malloc(MOTION_JPEG_MAX, MALLOC_CAP_SPIRAM);
     s_motion_sem = xSemaphoreCreateBinary();
     if (s_mjpeg && s_motion_sem) {

@@ -127,14 +127,31 @@ static const char PAGE_HEAD[] =
     "code{color:#ffcc80}.ok{color:#81c784}.bad{color:#e57373}#res{margin-top:10px;font-size:13px}"
     "</style></head><body>";
 
+/* Formatierte Ausgabe ohne feste Laengengrenze (Puffer passend allokiert) */
 static void send_fmt(httpd_req_t *req, const char *fmt, ...)
 {
-    char buf[1024];
+    char small[512];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    int n = vsnprintf(small, sizeof(small), fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+        return;
+    }
+    if (n < (int)sizeof(small)) {
+        httpd_resp_sendstr_chunk(req, small);
+        return;
+    }
+    char *buf = malloc(n + 1);
+    if (!buf) {
+        ESP_LOGE(TAG, "Kein Speicher fuer Seitenausgabe (%d Byte)", n);
+        return;
+    }
+    va_start(ap, fmt);
+    vsnprintf(buf, n + 1, fmt, ap);
     va_end(ap);
     httpd_resp_sendstr_chunk(req, buf);
+    free(buf);
 }
 
 static esp_err_t h_root(httpd_req_t *req)
