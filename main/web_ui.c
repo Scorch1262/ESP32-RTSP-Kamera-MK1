@@ -189,9 +189,21 @@ static esp_err_t h_root(httpd_req_t *req)
              "<label>Schalt-Topic der IR-Beleuchtung (Nutzlast 0 = aus, 1 = ein)</label>"
              "<input name=mqtt_topic value=\"%s\" maxlength=63>"
              "<label>GPIO der IR-Beleuchtung (-1 = aus)</label><input name=ir_gpio type=number min=-1 max=54 value=%d>"
-             "<label><input type=checkbox name=ir_active_low value=1 style='width:auto' %s> Ausgang Low-aktiv (Low = ein)</label>"
-             "<button type=submit>Speichern &amp; Neustart</button></form>",
+             "<label><input type=checkbox name=ir_active_low value=1 style='width:auto' %s> Ausgang Low-aktiv (Low = ein)</label>",
              e1, e2, e3, c->ir_gpio, c->ir_active_low ? "checked" : "");
+#if CONFIG_IDF_TARGET_ESP32S3
+    static const int widths[] = { 640, 800, 1024, 1280, 1280 + 1, 1600, 1920 };
+    static const char *names[] = { "640 x 480 (VGA)", "800 x 600 (SVGA)", "1024 x 768 (XGA)", "1280 x 720 (HD)",
+                                   "1280 x 1024 (SXGA)", "1600 x 1200 (UXGA)", "1920 x 1080 (Full HD)" };
+    httpd_resp_sendstr_chunk(req, "<label>Kamera-Aufloesung (MJPEG)</label><select name=cam_width>");
+    for (int i = 0; i < 7; i++) {
+        send_fmt(req, "<option value=%d %s>%s</option>", widths[i],
+                 widths[i] == c->cam_width ? "selected" : "", names[i]);
+    }
+    send_fmt(req, "</select><label>JPEG-Qualitaet (4 = beste, 40 = kleinste Datenmenge)</label>"
+                  "<input name=cam_quality type=number min=4 max=40 value=%d>", c->cam_quality);
+#endif
+    httpd_resp_sendstr_chunk(req, "<button type=submit>Speichern &amp; Neustart</button></form>");
 
     httpd_resp_sendstr_chunk(req, "</body></html>");
     httpd_resp_sendstr_chunk(req, NULL);
@@ -249,6 +261,15 @@ static esp_err_t h_save(httpd_req_t *req)
         c.ir_gpio = (g < -1 || g > 54) ? -1 : g;
     }
     c.ir_active_low = form_get(body, "ir_active_low", v, sizeof(v));
+#if CONFIG_IDF_TARGET_ESP32S3
+    if (form_get(body, "cam_width", v, sizeof(v)) && v[0]) {
+        c.cam_width = atoi(v);
+    }
+    if (form_get(body, "cam_quality", v, sizeof(v)) && v[0]) {
+        int q = atoi(v);
+        c.cam_quality = q < 4 ? 4 : (q > 40 ? 40 : q);
+    }
+#endif
     free(body);
 
     esp_err_t err = config_save(&c);

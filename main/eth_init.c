@@ -1,11 +1,18 @@
 /*
- * Ethernet-Initialisierung fuer Waveshare ESP32-P4-ETH
- * Interne EMAC (RMII, 50-MHz-Referenztakt vom PHY an GPIO50), PHY IP101.
+ * Ethernet-Initialisierung
+ *  - Waveshare ESP32-P4-ETH: interne EMAC (RMII, Referenztakt vom PHY an GPIO50), PHY IP101
+ *  - Waveshare ESP32-S3-ETH: W5500 am SPI2-Bus (MOSI 11, MISO 12, SCLK 13, CS 14, INT 10, RST 9)
  */
 #include <string.h>
 #include "eth_init.h"
 #include "esp_eth.h"
+#if CONFIG_IDF_TARGET_ESP32P4
 #include "esp_eth_mac_esp.h"
+#else
+#include "driver/spi_master.h"
+#include "driver/gpio.h"
+#include "esp_mac.h"
+#endif
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -81,6 +88,7 @@ esp_err_t eth_start(const app_config_t *cfg)
         ESP_LOGI(TAG, "Statische IP %s", cfg->ip);
     }
 
+#if CONFIG_IDF_TARGET_ESP32P4
     /* MAC: interne EMAC des ESP32-P4. Die Defaults entsprechen der Waveshare-Belegung
        (TXD0=34, TXD1=35, TX_EN=49, RXD0=29, RXD1=30, CRS_DV=28, REF_CLK-Eingang=50). */
     eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
@@ -100,9 +108,48 @@ esp_err_t eth_start(const app_config_t *cfg)
 #endif
     ESP_RETURN_ON_FALSE(phy, ESP_FAIL, TAG, "PHY konnte nicht angelegt werden");
 
+#else
+    /* W5500 ueber SPI */
+    ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), TAG, "GPIO-ISR-Dienst");
+    spi_bus_config_t bus = {
+        .mosi_io_num = CONFIG_APP_W5500_MOSI,
+        .miso_io_num = CONFIG_APP_W5500_MISO,
+        .sclk_io_num = CONFIG_APP_W5500_SCLK,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+    };
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO), TAG, "SPI-Bus");
+    spi_device_interface_config_t dev = {
+        .mode = 0,
+        .clock_speed_hz = CONFIG_APP_W5500_SPI_MHZ * 1000 * 1000,
+        .queue_size = 20,
+        .spics_io_num = CONFIG_APP_W5500_CS,
+    };
+    eth_w5500_config_t w5500_config = ETH_W5500_DEFAULT_CONFIG(SPI2_HOST, &dev);
+    w5500_config.int_gpio_num = CONFIG_APP_W5500_INT;
+
+    eth_mac_config_t mac_config = ETH_MAC_DEFAULT_CONFIG();
+    mac_config.rx_task_stack_size = 4096;
+    mac_config.rx_task_prio = 18;
+    esp_eth_mac_t *mac = esp_eth_mac_new_w5500(&w5500_config, &mac_config);
+    ESP_RETURN_ON_FALSE(mac, ESP_FAIL, TAG, "W5500-MAC konnte nicht angelegt werden");
+
+    eth_phy_config_t phy_config = ETH_PHY_DEFAULT_CONFIG();
+    phy_config.reset_gpio_num = CONFIG_APP_W5500_RST;
+    esp_eth_phy_t *phy = esp_eth_phy_new_w5500(&phy_config);
+    ESP_RETURN_ON_FALSE(phy, ESP_FAIL, TAG, "W5500-PHY konnte nicht angelegt werden");
+
+#endif
+
     esp_eth_config_t eth_config = ETH_DEFAULT_CONFIG(mac, phy);
     static esp_eth_handle_t eth_handle = NULL;
     ESP_RETURN_ON_ERROR(esp_eth_driver_install(&eth_config, &eth_handle), TAG, "Treiberinstallation");
+#if !CONFIG_IDF_TARGET_ESP32P4
+    /* Der W5500 hat keine eigene MAC-Adresse - die Ethernet-MAC des ESP32-S3 verwenden */
+    uint8_t mac_addr[6];
+    esp_read_mac(mac_addr, ESP_MAC_ETH);
+    esp_eth_ioctl(eth_handle, ETH_CMD_S_MAC_ADDR, mac_addr);
+#endif
 
     ESP_RETURN_ON_ERROR(esp_netif_attach(s_netif, esp_eth_new_netif_glue(eth_handle)), TAG, "netif attach");
 

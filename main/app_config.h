@@ -18,6 +18,10 @@ typedef struct {
 
     int  ir_gpio;           /* GPIO der IR-Beleuchtung, -1 = aus */
     bool ir_active_low;     /* true: Ausgang Low = Beleuchtung ein */
+
+    /* Ab v1.3.0 (nur ESP32-S3 genutzt) - am Ende angehaengt, aeltere Einstellungen bleiben gueltig */
+    int  cam_width;         /* Aufloesung: 640, 800, 1024, 1280 (HD), 1281 (SXGA), 1600, 1920 */
+    int  cam_quality;       /* JPEG-Qualitaet 4..40 (kleiner = besser) */
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */

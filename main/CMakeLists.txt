@@ -1,6 +1,19 @@
+set(srcs "main.c" "eth_init.c" "rtsp_server.c" "app_config.c" "ir_light.c" "mqtt_ctrl.c" "web_ui.c")
+set(reqs esp_eth esp_netif esp_event esp_timer mbedtls lwip esp_app_format nvs_flash mqtt json
+         esp_http_server esp_driver_gpio)
+
+if(IDF_TARGET STREQUAL "esp32p4")
+    list(APPEND srcs "video_p4.c" "camera.c")
+    list(APPEND reqs esp_video esp_h264 esp_driver_ppa esp_mm)
+elseif(IDF_TARGET STREQUAL "esp32s3")
+    list(APPEND srcs "video_s3.c")
+    list(APPEND reqs esp32-camera esp_driver_spi)
+else()
+    message(FATAL_ERROR "Nur ESP32-P4 und ESP32-S3 werden unterstuetzt")
+endif()
+
 idf_component_register(
-    SRCS "main.c" "eth_init.c" "camera.c" "rtsp_server.c"
-         "app_config.c" "ir_light.c" "mqtt_ctrl.c" "web_ui.c"
+    SRCS ${srcs}
     INCLUDE_DIRS "."
-    PRIV_REQUIRES esp_video esp_h264 esp_eth esp_netif esp_event esp_timer esp_driver_ppa esp_mm mbedtls lwip esp_app_format nvs_flash mqtt json esp_http_server esp_driver_gpio
+    PRIV_REQUIRES ${reqs}
 )

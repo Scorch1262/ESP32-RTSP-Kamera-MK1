@@ -4,7 +4,8 @@
  *  - Methoden: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER
  *  - Transport: RTP/AVP/TCP (interleaved, z. B. "rtsp_transport tcp")
  *               RTP/AVP     (UDP unicast)
- *  - Paketierung: RFC 6184, Single-NAL und FU-A (packetization-mode=1)
+ *  - Paketierung: H.264 nach RFC 6184 (Single-NAL, FU-A)
+ *                 MJPEG nach RFC 2435 (dynamische Quantisierungstabellen, Restart-Marker)
  */
 #include <string.h>
 #include <strings.h>
@@ -31,6 +32,8 @@ static const char *TAG = "rtsp";
 #define RTSP_RX_BUF          2048
 #define RTSP_TX_BUF          1536
 #define RTP_PT_H264          96
+#define RTP_PT_JPEG          26
+#define RTP_PREFIX_MAX       160
 #define RTP_MAX_PAYLOAD      CONFIG_APP_RTP_MAX_PAYLOAD
 #define SESSION_TIMEOUT_S    60
 #define UDP_IDLE_TIMEOUT_US  (90LL * 1000 * 1000)
@@ -64,7 +67,8 @@ static volatile bool s_idr_request;
 static uint8_t s_sps[PARAM_SET_MAX], s_pps[PARAM_SET_MAX];
 static size_t s_sps_len, s_pps_len;
 
-static uint8_t s_pkt[4 + 12 + 2 + RTP_MAX_PAYLOAD];
+static uint8_t s_pkt[4 + 12 + RTP_PREFIX_MAX + RTP_MAX_PAYLOAD];
+static uint8_t s_pt = RTP_PT_H264;
 
 /* ------------------------------------------------------------------------- */
 /* Hilfsfunktionen                                                            */
@@ -183,7 +187,7 @@ static void send_rtp(rtsp_client_t *c, const uint8_t *pre, size_t pre_len,
     }
     uint8_t *rtp = s_pkt + 4;
     rtp[0] = 0x80;
-    rtp[1] = (marker ? 0x80 : 0x00) | RTP_PT_H264;
+    rtp[1] = (marker ? 0x80 : 0x00) | s_pt;
     rtp[2] = c->seq >> 8;
     rtp[3] = c->seq & 0xFF;
     rtp[4] = ts >> 24;
@@ -343,6 +347,173 @@ void rtsp_server_push_frame(const uint8_t *data, size_t len, uint32_t ts90k, boo
     xSemaphoreGive(s_lock);
 }
 
+/* ------------------------------------------------------------------------- */
+/* MJPEG (RFC 2435)                                                           */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    const uint8_t *scan;
+    size_t scan_len;
+    uint8_t type;           /* 0 = 4:2:2, 1 = 4:2:0 (+64 mit Restart-Markern) */
+    uint16_t width, height;
+    uint16_t dri;
+    const uint8_t *qt[4];
+    uint8_t comp_tq[3];
+    int ncomp;
+} jpeg_info_t;
+
+static bool jpeg_parse(const uint8_t *d, size_t len, jpeg_info_t *ji)
+{
+    memset(ji, 0, sizeof(*ji));
+    if (len < 4 || d[0] != 0xFF || d[1] != 0xD8) {
+        return false;
+    }
+    /* Ende (EOI) von hinten suchen - Puffer kann Fuellbytes enthalten */
+    size_t end = len;
+    while (end >= 2 && !(d[end - 2] == 0xFF && d[end - 1] == 0xD9)) {
+        end--;
+    }
+    if (end < 4) {
+        return false;
+    }
+    end -= 2;
+
+    size_t p = 2;
+    int sampling = -1;
+    while (p + 4 <= end) {
+        if (d[p] != 0xFF) {
+            return false;
+        }
+        uint8_t m = d[p + 1];
+        if (m == 0xFF) {
+            p++;
+            continue;
+        }
+        if (m == 0xD8 || (m >= 0xD0 && m <= 0xD7)) {
+            p += 2;
+            continue;
+        }
+        size_t seg = (d[p + 2] << 8) | d[p + 3];
+        const uint8_t *s = d + p + 4;
+        size_t slen = seg - 2;
+        if (p + 2 + seg > end) {
+            return false;
+        }
+        switch (m) {
+        case 0xDB: {                                /* DQT */
+            size_t o = 0;
+            while (o + 65 <= slen) {
+                uint8_t pq = s[o] >> 4, tq = s[o] & 0x0F;
+                if (pq != 0 || tq > 3) {
+                    return false;                   /* nur 8-Bit-Tabellen */
+                }
+                ji->qt[tq] = s + o + 1;
+                o += 65;
+            }
+            break;
+        }
+        case 0xC0:
+        case 0xC1: {                                /* SOF0/1 Baseline */
+            ji->height = (s[1] << 8) | s[2];
+            ji->width = (s[3] << 8) | s[4];
+            ji->ncomp = s[5];
+            if (ji->ncomp != 3) {
+                return false;
+            }
+            for (int i = 0; i < 3; i++) {
+                ji->comp_tq[i] = s[6 + i * 3 + 2] & 3;
+            }
+            sampling = s[6 + 1];                    /* H/V der Luminanz */
+            break;
+        }
+        case 0xC2:
+            return false;                           /* progressiv nicht unterstuetzt */
+        case 0xDD:                                  /* DRI */
+            ji->dri = (s[0] << 8) | s[1];
+            break;
+        case 0xDA:                                  /* SOS -> Bilddaten folgen */
+            ji->scan = d + p + 2 + seg;
+            ji->scan_len = end - (p + 2 + seg);
+            if (sampling == 0x21) {
+                ji->type = 0;
+            } else if (sampling == 0x22) {
+                ji->type = 1;
+            } else {
+                return false;
+            }
+            if (ji->dri) {
+                ji->type += 64;
+            }
+            return ji->width && ji->height && ji->width <= 2040 && ji->height <= 2040 &&
+                   ji->qt[ji->comp_tq[0]] && ji->qt[ji->comp_tq[1]];
+        default:
+            break;
+        }
+        p += 2 + seg;
+    }
+    return false;
+}
+
+void rtsp_server_push_jpeg(const uint8_t *data, size_t len, uint32_t ts90k)
+{
+    jpeg_info_t ji;
+    if (!jpeg_parse(data, len, &ji)) {
+        static int warned;
+        if (warned++ < 5) {
+            ESP_LOGW(TAG, "JPEG nicht RFC-2435-kompatibel - Bild verworfen");
+        }
+        return;
+    }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int ci = 0; ci < s_cfg.max_clients; ci++) {
+        rtsp_client_t *c = &s_clients[ci];
+        if (!c->used || !c->playing || c->broken) {
+            continue;
+        }
+        size_t off = 0;
+        int pkts = 0;
+        while (off < ji.scan_len && !c->broken) {
+            uint8_t pre[RTP_PREFIX_MAX];
+            size_t pl = 0;
+            /* JPEG-Hauptheader */
+            pre[pl++] = 0;                          /* type-specific */
+            pre[pl++] = off >> 16;
+            pre[pl++] = off >> 8;
+            pre[pl++] = off;
+            pre[pl++] = ji.type;
+            pre[pl++] = 255;                        /* Q >= 128: Tabellen im Datenstrom */
+            pre[pl++] = ji.width / 8;
+            pre[pl++] = ji.height / 8;
+            if (ji.dri) {                           /* Restart-Marker-Header */
+                pre[pl++] = ji.dri >> 8;
+                pre[pl++] = ji.dri;
+                pre[pl++] = 0xFF;                   /* F=1, L=1, Count=0x3FFF */
+                pre[pl++] = 0xFF;
+            }
+            if (off == 0) {                         /* Quantisierungstabellen-Header */
+                pre[pl++] = 0;
+                pre[pl++] = 0;                      /* Praezision 8 Bit */
+                pre[pl++] = 0;
+                pre[pl++] = 128;
+                memcpy(pre + pl, ji.qt[ji.comp_tq[0]], 64);
+                pl += 64;
+                memcpy(pre + pl, ji.qt[ji.comp_tq[1]], 64);
+                pl += 64;
+            }
+            size_t room = RTP_MAX_PAYLOAD - pl;
+            size_t chunk = ji.scan_len - off < room ? ji.scan_len - off : room;
+            bool last = (off + chunk == ji.scan_len);
+            send_rtp(c, pre, pl, ji.scan + off, chunk, last, ts90k);
+            off += chunk;
+            if (!c->tcp && (++pkts % 24) == 0) {
+                vTaskDelay(1);
+            }
+        }
+    }
+    xSemaphoreGive(s_lock);
+}
+
 bool rtsp_server_take_idr_request(void)
 {
     if (s_idr_request) {
@@ -391,6 +562,32 @@ static void handle_describe(rtsp_client_t *c, const char *url, const char *cseq)
         send_reply(c, 404, "Not Found", cseq, NULL, NULL);
         return;
     }
+    char ip[16];
+    local_ip(c->sock, ip, sizeof(ip));
+    char sdp[1024];
+
+    if (s_cfg.codec == RTSP_CODEC_MJPEG) {
+        snprintf(sdp, sizeof(sdp),
+                 "v=0\r\n"
+                 "o=- %" PRIu32 " 1 IN IP4 %s\r\n"
+                 "s=P4-ETH-RTSP-Cam-MK1\r\n"
+                 "i=%s\r\n"
+                 "c=IN IP4 0.0.0.0\r\n"
+                 "t=0 0\r\n"
+                 "a=range:npt=0-\r\n"
+                 "a=control:*\r\n"
+                 "m=video 0 RTP/AVP %d\r\n"
+                 "a=rtpmap:%d JPEG/90000\r\n"
+                 "a=framesize:%d %" PRIu32 "-%" PRIu32 "\r\n"
+                 "a=x-dimensions:%" PRIu32 ",%" PRIu32 "\r\n"
+                 "a=framerate:%d\r\n"
+                 "a=control:track1\r\n",
+                 esp_random(), ip, s_cfg.info ? s_cfg.info : "MJPEG",
+                 RTP_PT_JPEG, RTP_PT_JPEG, RTP_PT_JPEG, s_cfg.width, s_cfg.height,
+                 s_cfg.width, s_cfg.height, s_cfg.fps);
+        goto send;
+    }
+
     if (!wait_for_param_sets(3000)) {
         send_reply(c, 503, "Service Unavailable", cseq, NULL, NULL);
         return;
@@ -408,15 +605,11 @@ static void handle_describe(rtsp_client_t *c, const char *url, const char *cseq)
     memcpy(profile, s_sps + 1, 3);
     xSemaphoreGive(s_lock);
 
-    char ip[16];
-    local_ip(c->sock, ip, sizeof(ip));
-
-    char sdp[1024];
     snprintf(sdp, sizeof(sdp),
              "v=0\r\n"
              "o=- %" PRIu32 " 1 IN IP4 %s\r\n"
              "s=P4-ETH-RTSP-Cam-MK1\r\n"
-             "i=OV5640 H.264 Live\r\n"
+             "i=%s\r\n"
              "c=IN IP4 0.0.0.0\r\n"
              "t=0 0\r\n"
              "a=range:npt=0-\r\n"
@@ -427,12 +620,13 @@ static void handle_describe(rtsp_client_t *c, const char *url, const char *cseq)
              "a=framesize:%d %" PRIu32 "-%" PRIu32 "\r\n"
              "a=framerate:%d\r\n"
              "a=control:track1\r\n",
-             esp_random(), ip,
+             esp_random(), ip, s_cfg.info ? s_cfg.info : "H.264",
              RTP_PT_H264, RTP_PT_H264, RTP_PT_H264,
              profile[0], profile[1], profile[2], sps_b64, pps_b64,
              RTP_PT_H264, s_cfg.width, s_cfg.height,
              s_cfg.fps);
 
+send:;
     char extra[256];
     snprintf(extra, sizeof(extra),
              "Content-Base: rtsp://%s:%u/%s/\r\n"
@@ -523,7 +717,7 @@ static void handle_play(rtsp_client_t *c, const char *cseq)
     send_reply(c, 200, "OK", cseq, extra, NULL);
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    c->wait_idr = true;
+    c->wait_idr = (s_cfg.codec == RTSP_CODEC_H264);
     c->playing = true;
     xSemaphoreGive(s_lock);
     s_idr_request = true;
@@ -752,6 +946,7 @@ static void server_task(void *arg)
 esp_err_t rtsp_server_start(const rtsp_server_config_t *cfg)
 {
     s_cfg = *cfg;
+    s_pt = (cfg->codec == RTSP_CODEC_MJPEG) ? RTP_PT_JPEG : RTP_PT_H264;
     s_clients = calloc(s_cfg.max_clients, sizeof(rtsp_client_t));
     s_lock = xSemaphoreCreateMutex();
     if (!s_clients || !s_lock) {

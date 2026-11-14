@@ -3,6 +3,7 @@ menu "P4-ETH-RTSP-Cam-MK1"
     menu "Ethernet"
         choice APP_ETH_PHY
             prompt "Ethernet-PHY"
+            depends on IDF_TARGET_ESP32P4
             default APP_ETH_PHY_IP101
             config APP_ETH_PHY_IP101
                 bool "IP101 (Standard bei Waveshare ESP32-P4-Boards)"
@@ -12,6 +13,7 @@ menu "P4-ETH-RTSP-Cam-MK1"
 
         config APP_ETH_PHY_ADDR
             int "PHY-Adresse"
+            depends on IDF_TARGET_ESP32P4
             range -1 31
             default 1
             help
@@ -19,16 +21,50 @@ menu "P4-ETH-RTSP-Cam-MK1"
 
         config APP_ETH_PHY_RST_GPIO
             int "PHY-Reset-GPIO"
+            depends on IDF_TARGET_ESP32P4
             range -1 54
             default 51
 
         config APP_ETH_MDC_GPIO
             int "SMI MDC GPIO"
+            depends on IDF_TARGET_ESP32P4
             default 31
 
         config APP_ETH_MDIO_GPIO
             int "SMI MDIO GPIO"
+            depends on IDF_TARGET_ESP32P4
             default 52
+
+        config APP_W5500_SPI_MHZ
+            int "W5500 SPI-Takt (MHz)"
+            depends on IDF_TARGET_ESP32S3
+            range 8 80
+            default 36
+
+        config APP_W5500_MOSI
+            int "W5500 MOSI"
+            depends on IDF_TARGET_ESP32S3
+            default 11
+        config APP_W5500_MISO
+            int "W5500 MISO"
+            depends on IDF_TARGET_ESP32S3
+            default 12
+        config APP_W5500_SCLK
+            int "W5500 SCLK"
+            depends on IDF_TARGET_ESP32S3
+            default 13
+        config APP_W5500_CS
+            int "W5500 CS"
+            depends on IDF_TARGET_ESP32S3
+            default 14
+        config APP_W5500_INT
+            int "W5500 INT"
+            depends on IDF_TARGET_ESP32S3
+            default 10
+        config APP_W5500_RST
+            int "W5500 RST"
+            depends on IDF_TARGET_ESP32S3
+            default 9
 
         config APP_HOSTNAME
             string "Hostname"
@@ -54,7 +90,8 @@ menu "P4-ETH-RTSP-Cam-MK1"
             default "192.168.1.1"
     endmenu
 
-    menu "Kamera (OV5640, MIPI-CSI)"
+    menu "Kamera (OV5640, MIPI-CSI) - ESP32-P4"
+        depends on IDF_TARGET_ESP32P4
         config APP_CAM_SCCB_PORT
             int "SCCB/I2C-Port"
             default 0
@@ -87,7 +124,8 @@ menu "P4-ETH-RTSP-Cam-MK1"
                 Der OV5640-Treiber liefert ueber MIPI-CSI 1280x720 bei 14 fps.
     endmenu
 
-    menu "H.264-Encoder"
+    menu "H.264-Encoder - ESP32-P4"
+        depends on IDF_TARGET_ESP32P4
         config APP_H264_BITRATE
             int "Ziel-Bitrate (bit/s)"
             range 100000 20000000
@@ -107,6 +145,79 @@ menu "P4-ETH-RTSP-Cam-MK1"
             int "QP maximal"
             range 0 51
             default 38
+    endmenu
+
+    menu "Kamera (OV5640/OV2640, DVP, MJPEG) - ESP32-S3"
+        depends on IDF_TARGET_ESP32S3
+
+        config APP_S3_CAM_WIDTH
+            int "Standard-Aufloesung (640, 800, 1024, 1280=HD, 1281=SXGA, 1600, 1920)"
+            default 1280
+            help
+                1280 = HD 1280x720, 1600 = 1600x1200, 1920 = Full HD 1920x1080.
+                Spaeter auf der Webseite aenderbar.
+
+        config APP_S3_JPEG_QUALITY
+            int "JPEG-Qualitaet (4 = beste, 40 = schlechteste)"
+            range 4 40
+            default 12
+
+        config APP_S3_CAM_XCLK_HZ
+            int "XCLK-Frequenz (Hz)"
+            default 20000000
+
+        config APP_S3_CAM_VFLIP
+            bool "Bild vertikal spiegeln (OV5640)"
+            default n
+        config APP_S3_CAM_HMIRROR
+            bool "Bild horizontal spiegeln (OV5640)"
+            default n
+
+        config APP_S3_CAM_PWDN
+            int "Kamera-Versorgung (Waveshare: GPIO8, Low = ein)"
+            default 8
+        config APP_S3_CAM_XCLK
+            int "XCLK"
+            default 3
+        config APP_S3_CAM_SDA
+            int "SIOD (SDA)"
+            default 48
+        config APP_S3_CAM_SCL
+            int "SIOC (SCL)"
+            default 47
+        config APP_S3_CAM_D0
+            int "D0"
+            default 41
+        config APP_S3_CAM_D1
+            int "D1"
+            default 45
+        config APP_S3_CAM_D2
+            int "D2"
+            default 46
+        config APP_S3_CAM_D3
+            int "D3"
+            default 42
+        config APP_S3_CAM_D4
+            int "D4"
+            default 40
+        config APP_S3_CAM_D5
+            int "D5"
+            default 38
+        config APP_S3_CAM_D6
+            int "D6"
+            default 15
+        config APP_S3_CAM_D7
+            int "D7"
+            default 18
+        config APP_S3_CAM_VSYNC
+            int "VSYNC"
+            default 1
+        config APP_S3_CAM_HREF
+            int "HREF"
+            default 2
+        config APP_S3_CAM_PCLK
+            int "PCLK"
+            default 39
     endmenu
 
     menu "RTSP-Server"
@@ -146,6 +257,7 @@ menu "P4-ETH-RTSP-Cam-MK1"
         config APP_IR_GPIO
             int "GPIO der IR-Beleuchtung (-1 = aus)"
             range -1 54
+            default 17 if IDF_TARGET_ESP32S3
             default 20
 
         config APP_IR_ACTIVE_LOW

@@ -35,6 +35,13 @@ static void set_defaults(app_config_t *c)
     strlcpy(c->mqtt_uri, CONFIG_APP_MQTT_URI, sizeof(c->mqtt_uri));
     strlcpy(c->mqtt_topic, CONFIG_APP_MQTT_TOPIC, sizeof(c->mqtt_topic));
     c->ir_gpio = CONFIG_APP_IR_GPIO;
+#if CONFIG_IDF_TARGET_ESP32S3
+    c->cam_width = CONFIG_APP_S3_CAM_WIDTH;
+    c->cam_quality = CONFIG_APP_S3_JPEG_QUALITY;
+#else
+    c->cam_width = 1280;
+    c->cam_quality = 12;
+#endif
 #if CONFIG_APP_IR_ACTIVE_LOW
     c->ir_active_low = true;
 #endif
@@ -55,13 +62,19 @@ void config_load(app_config_t *cfg)
         ESP_LOGI(TAG, "Keine gespeicherte Konfiguration - Standardwerte");
         return;
     }
-    stored_cfg_t s;
-    size_t len = sizeof(s);
-    if (nvs_get_blob(h, CFG_KEY, &s, &len) == ESP_OK && len == sizeof(s) && s.magic == CFG_MAGIC) {
-        *cfg = s.cfg;
-        ESP_LOGI(TAG, "Konfiguration aus NVS geladen");
+    /* Groesse abfragen: aeltere Versionen haben eine kuerzere Struktur gespeichert */
+    size_t len = 0;
+    if (nvs_get_blob(h, CFG_KEY, NULL, &len) == ESP_OK && len >= sizeof(uint32_t) + 8 &&
+            len <= sizeof(stored_cfg_t)) {
+        stored_cfg_t s = { .magic = 0, .cfg = *cfg };   /* neue Felder behalten Standardwerte */
+        if (nvs_get_blob(h, CFG_KEY, &s, &len) == ESP_OK && s.magic == CFG_MAGIC) {
+            *cfg = s.cfg;
+            ESP_LOGI(TAG, "Konfiguration aus NVS geladen");
+        } else {
+            ESP_LOGW(TAG, "Gespeicherte Konfiguration ungueltig - Standardwerte");
+        }
     } else {
-        ESP_LOGW(TAG, "Gespeicherte Konfiguration ungueltig - Standardwerte");
+        ESP_LOGW(TAG, "Gespeicherte Konfiguration hat falsches Format - Standardwerte");
     }
     nvs_close(h);
 }

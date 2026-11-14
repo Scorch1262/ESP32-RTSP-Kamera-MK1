@@ -1,29 +1,12 @@
-# --- Ziel / Speicher ---------------------------------------------------------
-CONFIG_IDF_TARGET="esp32p4"
+# Gemeinsame Einstellungen fuer ESP32-P4 und ESP32-S3
+# (zielabhaengige Werte: sdkconfig.defaults.esp32p4 / sdkconfig.defaults.esp32s3)
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 CONFIG_SPIRAM=y
-CONFIG_SPIRAM_SPEED_200M=y
-CONFIG_IDF_EXPERIMENTAL_FEATURES=y
-
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
-
-# --- Kamera: OV5640 an MIPI-CSI --------------------------------------------
-CONFIG_CAMERA_OV5640=y
-CONFIG_CAMERA_OV5640_AUTO_DETECT_MIPI_INTERFACE_SENSOR=y
-CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
-# DVP-, SPI- und USB-Kameras werden nicht gebraucht
-CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n
-CONFIG_ESP_VIDEO_ENABLE_SPI_VIDEO_DEVICE=n
-CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE=n
-
-# --- Ethernet ---------------------------------------------------------------
-CONFIG_ETH_USE_ESP32_EMAC=y
-CONFIG_ETH_DMA_TX_BUFFER_NUM=20
-CONFIG_ETH_DMA_RX_BUFFER_NUM=20
 
 # --- lwIP: groessere Puffer fuer Video --------------------------------------
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768

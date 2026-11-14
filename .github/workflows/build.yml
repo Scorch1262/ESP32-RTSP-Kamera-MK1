@@ -16,10 +16,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - variant: chip-rev-v3
+          - variant: esp32p4-chip-rev-v3
+            target: esp32p4
             defaults: "sdkconfig.defaults"
-          - variant: chip-rev-v1
+          - variant: esp32p4-chip-rev-v1
+            target: esp32p4
             defaults: "sdkconfig.defaults;sdkconfig.defaults.rev_v1"
+          - variant: esp32s3
+            target: esp32s3
+            defaults: "sdkconfig.defaults"
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +32,7 @@ jobs:
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v5.5.4
-          target: esp32p4
+          target: ${{ matrix.target }}
           command: idf.py -DSDKCONFIG_DEFAULTS="${{ matrix.defaults }}" build merge-bin
 
       - name: Firmware einsammeln
