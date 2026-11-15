@@ -2,6 +2,7 @@
  * MQTT: Zustand und Steuerung im selben Topic.
  *
  *   <Basis>/IR-Licht          0/1   IR-Licht aus/ein
+ *   <Basis>/Stream            0/1   RTSP-Stream aus/ein
  *   <Basis>/Daueraufnahme     0/1   Daueraufnahme (Ringspeicher) aus/ein
  *   <Basis>/Aufzeichnung      0/1   Zustand: Aufzeichnung laeuft; 1 = Clip starten, 0 = beenden
  *   <Basis>/Bewegung          0/1   Zustand: Bewegung erkannt; 1 = Bewegung ausloesen, 0 = zuruecksetzen
@@ -18,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include "rtsp_server.h"
 #include <ctype.h>
 #include "mqtt_ctrl.h"
 #include "ir_light.h"
@@ -35,6 +37,7 @@
 static const char *TAG = "mqtt";
 
 void app_request_state_publish(void);   /* main.c: alle Zustaende kurz danach erneut melden */
+void app_set_stream(bool on);           /* main.c: RTSP-Stream ein/aus (gespeichert) */
 
 static esp_mqtt_client_handle_t s_client;
 static volatile bool s_connected;
@@ -43,7 +46,7 @@ static char s_ip[16];
 
 /* Steuerbare Topics */
 static const char *const s_ctrl[] = {
-    "IR-Licht", "Daueraufnahme", "Aufzeichnung", "Bewegung", "Bewegungsaufnahme", "Empfindlichkeit",
+    "IR-Licht", "Stream", "Daueraufnahme", "Aufzeichnung", "Bewegung", "Bewegungsaufnahme", "Empfindlichkeit",
 };
 #define N_CTRL (sizeof(s_ctrl) / sizeof(s_ctrl[0]))
 
@@ -201,6 +204,13 @@ static void handle_command(const char *suffix, const char *v)
         }
         if (b >= 0) {
             ir_light_set(b);
+        }
+    } else if (!strcmp(suffix, "Stream")) {
+        if (!strcasecmp(v, "toggle") || !strcasecmp(v, "umschalten")) {
+            b = !rtsp_server_enabled();
+        }
+        if (b >= 0) {
+            app_set_stream(b);
         }
     } else if (!strcmp(suffix, "Daueraufnahme")) {
         if (b >= 0 && recorder_set_continuous(b) != ESP_OK) {

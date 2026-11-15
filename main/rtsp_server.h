@@ -40,5 +40,15 @@ void rtsp_server_push_jpeg(const uint8_t *data, size_t len, uint32_t ts90k);
 /** true, wenn ein neuer Client einen Keyframe braucht (Flag wird dabei zurueckgesetzt). */
 bool rtsp_server_take_idr_request(void);
 
+/**
+ * Stream ein-/ausschalten. Ausgeschaltet werden alle verbundenen Clients getrennt und
+ * neue Verbindungen mit "503 Service Unavailable" abgelehnt. Kamera, Aufnahmen und
+ * Bewegungserkennung laufen weiter.
+ */
+void rtsp_server_set_enabled(bool on);
+
+/** true, wenn der Stream eingeschaltet ist. */
+bool rtsp_server_enabled(void);
+
 /** Anzahl Clients, die gerade Video empfangen. */
 int rtsp_server_active_clients(void);

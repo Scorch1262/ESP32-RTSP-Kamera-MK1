@@ -63,6 +63,7 @@ static rtsp_server_config_t s_cfg;
 static rtsp_client_t *s_clients;
 static SemaphoreHandle_t s_lock;
 static volatile bool s_idr_request;
+static volatile bool s_enabled = true;
 
 static uint8_t s_sps[PARAM_SET_MAX], s_pps[PARAM_SET_MAX];
 static size_t s_sps_len, s_pps_len;
@@ -523,6 +524,37 @@ bool rtsp_server_take_idr_request(void)
     return false;
 }
 
+void rtsp_server_set_enabled(bool on)
+{
+    if (s_enabled == on) {
+        return;
+    }
+    s_enabled = on;
+    ESP_LOGI(TAG, "Stream %s", on ? "eingeschaltet" : "ausgeschaltet");
+    if (on || !s_clients || !s_lock) {
+        if (on) {
+            s_idr_request = true;
+        }
+        return;
+    }
+    /* Alle Clients trennen: der Client-Task beendet sich und raeumt auf */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < s_cfg.max_clients; i++) {
+        rtsp_client_t *c = &s_clients[i];
+        if (c->used && c->sock >= 0) {
+            c->playing = false;
+            c->broken = true;
+            shutdown(c->sock, SHUT_RDWR);
+        }
+    }
+    xSemaphoreGive(s_lock);
+}
+
+bool rtsp_server_enabled(void)
+{
+    return s_enabled;
+}
+
 int rtsp_server_active_clients(void)
 {
     int cnt = 0;
@@ -893,6 +925,16 @@ static void server_task(void *arg)
         int s = accept(ls, (struct sockaddr *)&peer, &plen);
         if (s < 0) {
             vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        if (!s_enabled) {
+            static const char off[] = "RTSP/1.0 503 Service Unavailable\r\nCSeq: 1\r\n\r\n";
+            struct timeval sto = { .tv_sec = 1, .tv_usec = 0 };
+            setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &sto, sizeof(sto));
+            send(s, off, sizeof(off) - 1, 0);
+            close(s);
+            ESP_LOGI(TAG, "Stream ausgeschaltet - Verbindung abgelehnt");
             continue;
         }
 

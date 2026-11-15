@@ -41,6 +41,9 @@ typedef struct {
 
     /* Ab v1.7.0 */
     int  video_rotation;    /* Bilddrehung im Uhrzeigersinn: 0, 90, 180, 270 */
+
+    /* Ab v1.8.0 */
+    bool stream_enable;     /* RTSP-Stream ein/aus (per Webseite oder MQTT <Basis>/Stream) */
 } app_config_t;
 
 /** Laedt die Konfiguration aus dem NVS (oder Standardwerte). */

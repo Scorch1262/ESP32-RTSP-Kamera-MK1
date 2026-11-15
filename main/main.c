@@ -89,6 +89,19 @@ static void update_dark(void)
 static volatile int64_t s_publish_req_us;
 
 /* Von mqtt_ctrl: nach Verbindung oder Befehl alle Zustaende kurz danach erneut melden */
+void app_request_state_publish(void);
+
+/* Stream ein/aus (Webseite, MQTT) - Zustand wird im NVS gespeichert */
+void app_set_stream(bool on)
+{
+    rtsp_server_set_enabled(on);
+    if (g_cfg.stream_enable != on) {
+        g_cfg.stream_enable = on;
+        config_save(&g_cfg);
+    }
+    app_request_state_publish();
+}
+
 void app_request_state_publish(void)
 {
     s_publish_req_us = esp_timer_get_time() + 700 * 1000;
@@ -98,7 +111,7 @@ void app_request_state_publish(void)
 static void publish_states(bool force)
 {
     static int last_rec = -1, last_cont = -1, last_mot = -1, last_dark = -2, last_bright = -100;
-    static int last_ir = -1, last_recen = -1, last_sens = -1;
+    static int last_ir = -1, last_recen = -1, last_sens = -1, last_stream = -1;
     static int64_t last_bright_t;
     int rec = recorder_active() ? 1 : 0;
     int cont = recorder_continuous() ? 1 : 0;
@@ -111,6 +124,11 @@ static void publish_states(bool force)
     if (force || ir != last_ir) {
         mqtt_ctrl_publish("IR-Licht", ir ? "1" : "0");
         last_ir = ir;
+    }
+    int stream = rtsp_server_enabled() ? 1 : 0;
+    if (force || stream != last_stream) {
+        mqtt_ctrl_publish("Stream", stream ? "1" : "0");
+        last_stream = stream;
     }
     int recen = g_cfg.rec_enable ? 1 : 0;
     if (force || recen != last_recen) {
@@ -281,6 +299,7 @@ void app_main(void)
             .codec = vi.codec,
             .info = vi.desc,
         };
+        rtsp_server_set_enabled(g_cfg.stream_enable);
         if (rtsp_server_start(&rcfg) == ESP_OK) {
             recorder_init(vi.width, vi.height, vi.codec);
             video_start();

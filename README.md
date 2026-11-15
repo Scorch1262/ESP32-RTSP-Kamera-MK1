@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.7.0**
+**Version 1.8.0**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -27,13 +27,14 @@ Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige J
 - P4: H.264 Baseline per Hardware, Bitrate/GOP/QP einstellbar; neue Clients bekommen sofort ein IDR-Frame
 - S3: MJPEG mit Auflösung und JPEG-Qualität auf der Webseite einstellbar
 - DHCP oder statische IP, Hostname einstellbar
-- **MQTT mit Zustand und Steuerung im selben Topic**: IR-Licht, Daueraufnahme, Aufzeichnung, Bewegung, Bewegungsaufnahme, Empfindlichkeit (GPIO der IR-Beleuchtung frei wählbar)
+- **MQTT mit Zustand und Steuerung im selben Topic**: IR-Licht, Stream, Daueraufnahme, Aufzeichnung, Bewegung, Bewegungsaufnahme, Empfindlichkeit (GPIO der IR-Beleuchtung frei wählbar)
 - **Konfigurations-Webseite** unter `http://<IP-Adresse>/` (Netzwerk, MQTT-Broker, Basis-Topic, IR-GPIO, Ein/Aus-Schalter, beim S3 auch Auflösung/Qualität) – gespeichert im NVS, kein Neukompilieren nötig
 - **Bewegungserkennung** mit einstellbarer Empfindlichkeit; Lichtwechsel (z. B. IR-Licht an/aus) werden ignoriert
 - **Aufnahme auf MicroSD** bei Bewegung, Clip-Länge einstellbar (5–600 s), älteste Aufnahmen werden bei voller Karte automatisch gelöscht (abschaltbar)
 - **Daueraufnahme als Ringspeicher** per Knopf auf der Webseite (bleibt nach Neustart aktiv)
 - **Aufnahmen-Seite** zum Herunterladen und Löschen der Videos
 - **Dunkel-Meldung** und Bildhelligkeit per MQTT
+- **Stream ein/aus** per MQTT (`<Basis>/Stream`) oder Webseite – Aufnahmen laufen dabei weiter
 - **Bild drehen** in 90°-Schritten über die Webseite (Stream, Aufnahmen und Bewegungserkennung)
 - **WLAN (nur ESP32-S3)**: mit vorhandenem WLAN verbinden oder eigenen Access Point öffnen, parallel zum Ethernet
 - Uhrzeit per NTP (Dateinamen mit Datum/Uhrzeit), ohne Internet wird die Uhrzeit vom Browser übernommen
@@ -82,16 +83,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.7.0-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -165,6 +166,7 @@ Jedes Topic zeigt den aktuellen Zustand und steuert zugleich die Funktion: Wer e
 | Topic | Zustand (Board meldet) | Steuerung (an das Board senden) |
 |---|---|---|
 | `Tuer/Kamera/IR-Licht` | `1` ein / `0` aus | `1` / `0` schaltet (auch `toggle`) |
+| `Tuer/Kamera/Stream` | `1` RTSP-Stream ein / `0` aus | `1` / `0` schaltet den Stream (auch `toggle`, wird gespeichert) |
 | `Tuer/Kamera/Daueraufnahme` | `1` / `0` | `1` / `0` Daueraufnahme (Ringspeicher) ein/aus |
 | `Tuer/Kamera/Aufzeichnung` | `1` solange eine Aufzeichnung läuft (Bewegung, manuell oder Daueraufnahme) | `1` startet einen Clip, `0` beendet jede Aufzeichnung und schaltet die Daueraufnahme aus |
 | `Tuer/Kamera/Bewegung` | `1` bei erkannter Bewegung, `0` nach 5 s ohne | `1` löst eine Bewegung aus (wie erkannt, startet ggf. einen Clip), `0` setzt zurück |
@@ -185,6 +187,7 @@ Werte wie `on`/`off`, `ein`/`aus`, `true`/`false` werden ebenfalls verstanden. I
 
 ```bash
 mosquitto_pub -h 192.168.1.10 -t Tuer/Kamera/IR-Licht -m 1          # IR-Licht ein
+mosquitto_pub -h 192.168.1.10 -t Tuer/Kamera/Stream -m 0            # Videostream aus
 mosquitto_pub -h 192.168.1.10 -t Tuer/Kamera/Daueraufnahme -m 1     # Daueraufnahme starten
 mosquitto_sub -h 192.168.1.10 -t 'Tuer/Kamera/#' -v                 # alles mitlesen
 ```
@@ -194,6 +197,10 @@ mosquitto_sub -h 192.168.1.10 -t 'Tuer/Kamera/#' -v                 # alles mitl
 **Keine persistenten Meldungen:** Alle Nachrichten werden ohne Retain-Flag gesendet. Nach jeder (Neu-)Verbindung meldet das Board alle Zustände einmal. Nach einem Neustart ist das IR-Licht **aus**. Beim ersten Start ab v1.5.1 löscht das Board einmalig die von älteren Versionen gespeicherten (retained) Meldungen auf dem Broker.
 
 > Ab v1.6.0 schaltet das reine Basis-Topic (`Tuer/Kamera` = `0`/`1`) nicht mehr – das IR-Licht wird über `Tuer/Kamera/IR-Licht` gesteuert.
+
+### Stream ein/aus
+
+`Tuer/Kamera/Stream` = `0` schaltet den RTSP-Stream ab: Verbundene Player (VLC, NVR …) werden getrennt, neue Verbindungen mit `503 Service Unavailable` abgewiesen. Kamera, Aufnahmen auf der SD-Karte, Bewegungserkennung und Dunkel-Meldung laufen weiter. Mit `1` ist der Stream sofort wieder abrufbar. Der Zustand bleibt nach einem Neustart erhalten und lässt sich auch auf der Webseite (Karte „Videostream“) schalten.
 
 ### Dunkel-Meldung
 
@@ -230,7 +237,7 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 
 ## Webseite
 
-`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT, WLAN, Uhrzeit, MicroSD, letzte Bewegung, Aufnahme), einen Ein/Aus-Schalter für die IR-Beleuchtung, die Aufnahmen und alle Einstellungen.
+`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT, WLAN, Uhrzeit, MicroSD, letzte Bewegung, Aufnahme), Ein/Aus-Schalter für den Videostream und die IR-Beleuchtung, die Aufnahmen und alle Einstellungen.
 
 | Adresse | Funktion |
 |---|---|
@@ -241,6 +248,7 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 | `POST /rec/dauer` | Daueraufnahme `1`/`0` |
 | `POST /sd-alles-loeschen` | Karte leeren (Inhalt muss `LOESCHEN` sein) |
 | `POST /licht` | IR-Beleuchtung `1`/`0` |
+| `POST /stream` | RTSP-Stream `1`/`0` (auch `toggle`) |
 | `GET /api/status` | Status als JSON | Die Seite hat keinen Passwortschutz – nur im eigenen Netz betreiben.
 
 ## Selbst bauen

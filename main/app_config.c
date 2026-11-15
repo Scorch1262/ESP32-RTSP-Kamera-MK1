@@ -53,6 +53,7 @@ static void set_defaults(app_config_t *c)
     c->dark_pct = 15;
     c->dark_ir_pct = 60;
     c->video_rotation = 0;
+    c->stream_enable = true;
 #if CONFIG_APP_IR_ACTIVE_LOW
     c->ir_active_low = true;
 #endif

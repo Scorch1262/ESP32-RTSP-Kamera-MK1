@@ -18,6 +18,7 @@
 #include "motion.h"
 
 int app_dark_state(void);   /* main.c */
+void app_set_stream(bool on);   /* main.c */
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -170,13 +171,14 @@ static esp_err_t h_root(httpd_req_t *req)
     send_fmt(req,
              "<div class=card><h2>Status</h2><table>"
              "<tr><td>IP-Adresse</td><td>%s</td></tr>"
-             "<tr><td>RTSP-Stream</td><td><code>rtsp://%s:%d/%s</code></td></tr>"
+             "<tr><td>RTSP-Stream</td><td><code>rtsp://%s:%d/%s</code> &ndash; <b class=%s>%s</b></td></tr>"
              "<tr><td>RTSP-Clients</td><td>%d</td></tr>"
              "<tr><td>MQTT</td><td class=%s>%s</td></tr>"
              "<tr><td>MQTT-Topics</td><td><code>%s/IR-Licht</code> = 0 / 1 (Zustand und Steuerung im selben Topic)</td></tr>"
              "<tr><td>IR-GPIO</td><td>%s%d%s</td></tr>"
              "<tr><td>Laufzeit</td><td>%lld min</td></tr>",
              s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
+             rtsp_server_enabled() ? "ok" : "bad", rtsp_server_enabled() ? "EIN" : "AUS",
              rtsp_server_active_clients(),
              c->mqtt_uri[0] == 0 ? "bad" : (mqtt_ctrl_connected() ? "ok" : "bad"),
              c->mqtt_uri[0] == 0 ? "nicht konfiguriert" : (mqtt_ctrl_connected() ? "verbunden" : "nicht verbunden"),
@@ -230,6 +232,19 @@ static esp_err_t h_root(httpd_req_t *req)
                 "String(-new Date().getTimezoneOffset())})</script>");
         }
     }
+
+    /* Stream */
+    send_fmt(req,
+        "<div class=card><h2>Videostream</h2>"
+        "<div style='display:flex;align-items:center;gap:16px'>"
+        "<span id=sst class=%s style='font-size:22px;font-weight:600'>%s</span>"
+        "<button onclick=ss(1)>Ein</button><button class=sec onclick=ss(0)>Aus</button></div>"
+        "<p style='font-size:12px;color:#9aa4b1'>Aus: RTSP-Clients werden getrennt und abgewiesen. "
+        "Aufnahmen auf der SD-Karte und die Bewegungserkennung laufen weiter. "
+        "MQTT: <code>%s/Stream</code> = 0 / 1</p></div>"
+        "<script>function ss(v){fetch('/stream',{method:'POST',body:String(v)}).then(x=>x.json())"
+        ".then(j=>{var e=document.getElementById('sst');e.textContent=j.on?'EIN':'AUS';e.className=j.on?'ok':'bad'})}</script>",
+        rtsp_server_enabled() ? "ok" : "bad", rtsp_server_enabled() ? "EIN" : "AUS", c->mqtt_topic);
 
     /* Aufnahmen */
     send_fmt(req,
@@ -529,15 +544,44 @@ static esp_err_t h_licht(httpd_req_t *req)
     return httpd_resp_sendstr(req, out);
 }
 
+static esp_err_t h_stream(httpd_req_t *req)
+{
+    char *body = read_body(req, 64);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Erwartet 0, 1 oder toggle");
+        return ESP_FAIL;
+    }
+    bool on = rtsp_server_enabled();
+    bool ok = true;
+    if (body[0] == '1' || !strcasecmp(body, "on") || !strcasecmp(body, "ein")) {
+        on = true;
+    } else if (body[0] == '0' || !strcasecmp(body, "off") || !strcasecmp(body, "aus")) {
+        on = false;
+    } else if (!strcasecmp(body, "toggle")) {
+        on = !on;
+    } else {
+        ok = false;
+    }
+    free(body);
+    if (ok) {
+        app_set_stream(on);
+    }
+    char out[48];
+    snprintf(out, sizeof(out), "{\"ok\":%s,\"on\":%s}", ok ? "true" : "false",
+             rtsp_server_enabled() ? "true" : "false");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, out);
+}
+
 static esp_err_t h_status(httpd_req_t *req)
 {
     char out[512];
     snprintf(out, sizeof(out),
-             "{\"version\":\"%s\",\"ip\":\"%s\",\"rtsp\":\"rtsp://%s:%d/%s\",\"rtsp_clients\":%d,"
+             "{\"version\":\"%s\",\"ip\":\"%s\",\"rtsp\":\"rtsp://%s:%d/%s\",\"stream\":%d,\"rtsp_clients\":%d,"
              "\"mqtt\":%s,\"ir_gpio\":%d,\"ir_licht\":%d,\"aufzeichnung\":%d,\"daueraufnahme\":%d,"
              "\"bewegung\":%d,\"helligkeit\":%d,\"dunkel\":%d}",
              esp_app_get_description()->version, s_ip, s_ip, CONFIG_APP_RTSP_PORT, CONFIG_APP_RTSP_PATH,
-             rtsp_server_active_clients(), mqtt_ctrl_connected() ? "true" : "false",
+             rtsp_server_enabled() ? 1 : 0, rtsp_server_active_clients(), mqtt_ctrl_connected() ? "true" : "false",
              g_cfg.ir_gpio, ir_light_get() ? 1 : 0, recorder_active() ? 1 : 0, recorder_continuous() ? 1 : 0,
              motion_active() ? 1 : 0, motion_brightness_pct(), app_dark_state() > 0 ? 1 : 0);
     httpd_resp_set_type(req, "application/json");
@@ -818,6 +862,7 @@ esp_err_t web_ui_start(void)
         { .uri = "/api/settime", .method = HTTP_POST, .handler = h_settime },
         { .uri = "/save", .method = HTTP_POST, .handler = h_save },
         { .uri = "/licht", .method = HTTP_POST, .handler = h_licht },
+        { .uri = "/stream", .method = HTTP_POST, .handler = h_stream },
         { .uri = "/api/status", .method = HTTP_GET, .handler = h_status },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
