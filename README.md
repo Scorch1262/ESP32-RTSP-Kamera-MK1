@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.9.0**
+**Version 1.9.1**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -84,16 +84,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.1-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.1-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.1-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.1-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.1-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.

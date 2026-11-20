@@ -139,8 +139,8 @@ static void send_fmt(httpd_req_t *req, const char *fmt, ...)
     va_start(ap, fmt);
     int n = vsnprintf(small, sizeof(small), fmt, ap);
     va_end(ap);
-    if (n < 0) {
-        return;
+    if (n <= 0) {
+        return;     /* Ein leerer Chunk wuerde die Antwort beenden! */
     }
     if (n < (int)sizeof(small)) {
         httpd_resp_sendstr_chunk(req, small);
@@ -203,7 +203,9 @@ static void send_camera_card(httpd_req_t *req)
                          o == def ? " (Standard)" : "");
             }
             httpd_resp_sendstr_chunk(req, "</select>");
-            httpd_resp_sendstr_chunk(req, hint);
+            if (hint[0]) {
+                httpd_resp_sendstr_chunk(req, hint);   /* leerer Chunk = Seitenende */
+            }
             if (i == CC_AF) {
                 char st[48];
                 cam_ctrl_af_status(st, sizeof(st));
