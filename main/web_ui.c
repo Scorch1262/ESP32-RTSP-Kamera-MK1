@@ -12,6 +12,7 @@
 #include "ir_light.h"
 #include "mqtt_ctrl.h"
 #include "rtsp_server.h"
+#include "cam_ctrl.h"
 #include "wifi_ctrl.h"
 #include "sdcard.h"
 #include "recorder.h"
@@ -157,6 +158,72 @@ static void send_fmt(httpd_req_t *req, const char *fmt, ...)
     free(buf);
 }
 
+/* Karte "Kamera-Einstellungen": nur die vom Sensor unterstuetzten Regler */
+static void send_camera_card(httpd_req_t *req)
+{
+    if (!cam_ctrl_available()) {
+        return;
+    }
+    send_fmt(req,
+        "<div class=card><h2>Kamera-Einstellungen</h2>"
+        "<p style='font-size:12px;color:#9aa4b1'>Sensor: <b>%s</b> &ndash; Aenderungen wirken sofort und werden "
+        "gespeichert (nur hier einstellbar, nicht per MQTT).</p>", cam_ctrl_sensor_name());
+
+    const char *group = "";
+    for (int i = 0; i < CC_COUNT; i++) {
+        if (!cam_ctrl_supported(i)) {
+            continue;
+        }
+        const cam_ctrl_def_t *d = cam_ctrl_def(i);
+        int v = cam_ctrl_get(i), def = cam_ctrl_default(i);
+        if (strcmp(group, d->group)) {
+            group = d->group;
+            send_fmt(req, "<h3 style='font-size:13px;color:#4fc3f7;margin:16px 0 4px'>%s</h3>", group);
+        }
+        char hint[160] = "";
+        if (d->hint) {
+            snprintf(hint, sizeof(hint), "<div style='font-size:11px;color:#6f7a87'>%s</div>", d->hint);
+        }
+        if (d->type == CAMCTL_RANGE) {
+            send_fmt(req,
+                "<label>%s: <b id=v_%s style='color:#e6e6e6'>%d</b> <span style='color:#6f7a87'>(Standard %d)</span></label>"
+                "<input type=range style='padding:0' min=%d max=%d value=%d "
+                "oninput=\"document.getElementById('v_%s').textContent=this.value\" onchange=\"cc('%s',this.value)\">%s",
+                d->label, d->key, v, def, d->min, d->max, v, d->key, d->key, hint);
+        } else if (d->type == CAMCTL_BOOL) {
+            send_fmt(req,
+                "<label style='display:flex;align-items:center;gap:8px;font-size:14px;color:#e6e6e6'>"
+                "<input type=checkbox style='width:auto' %s onchange=\"cc('%s',this.checked?1:0)\">%s "
+                "<span style='font-size:12px;color:#6f7a87'>(Standard %s)</span></label>%s",
+                v ? "checked" : "", d->key, d->label, def ? "ein" : "aus", hint);
+        } else {
+            send_fmt(req, "<label>%s</label><select onchange=\"cc('%s',this.value)\">", d->label, d->key);
+            for (int o = d->min; o <= d->max; o++) {
+                send_fmt(req, "<option value=%d %s>%s%s</option>", o, o == v ? "selected" : "", d->opts[o],
+                         o == def ? " (Standard)" : "");
+            }
+            httpd_resp_sendstr_chunk(req, "</select>");
+            httpd_resp_sendstr_chunk(req, hint);
+            if (i == CC_AF) {
+                char st[48];
+                cam_ctrl_af_status(st, sizeof(st));
+                send_fmt(req,
+                    "<div style='display:flex;align-items:center;gap:12px'>"
+                    "<button class=sec onclick=\"cc('af_trigger',1)\">Jetzt scharfstellen</button>"
+                    "<span style='font-size:13px;margin-top:12px'>Status: <b id=afst>%s</b></span></div>"
+                    "<script>setInterval(function(){fetch('/api/kamera').then(r=>r.json())"
+                    ".then(j=>{document.getElementById('afst').textContent=j.af})},3000)</script>", st);
+            }
+        }
+    }
+    httpd_resp_sendstr_chunk(req,
+        "<button class=sec onclick=\"if(confirm('Alle Kamera-Einstellungen auf Standard zuruecksetzen?'))"
+        "cc('reset',1,1)\">Alle auf Standard</button> <span id=ccres style='font-size:13px'></span></div>"
+        "<script>function cc(k,v,r){fetch('/kamera',{method:'POST',body:k+'='+v}).then(x=>x.json()).then(j=>{"
+        "var e=document.getElementById('ccres');e.textContent=j.msg;e.className=j.ok?'ok':'bad';"
+        "if(r||!j.ok)setTimeout(function(){location.reload()},j.ok?300:1500)})}</script>");
+}
+
 static esp_err_t h_root(httpd_req_t *req)
 {
     const app_config_t *c = &g_cfg;
@@ -272,6 +339,8 @@ static esp_err_t h_root(httpd_req_t *req)
         ".then(j=>{var e=document.getElementById('st');e.textContent=j.on?'EIN':'AUS';e.className=j.on?'ok':'bad'})}</script>",
         ir_light_get() ? "ok" : "bad", ir_light_get() ? "EIN" : "AUS",
         ir_light_available() ? "" : "<p class=bad>Kein GPIO konfiguriert - Ausgang inaktiv.</p>");
+
+    send_camera_card(req);
 
     /* Konfiguration */
     httpd_resp_sendstr_chunk(req, "<form class=card method=post action=/save><h2>Einstellungen</h2>");
@@ -573,6 +642,54 @@ static esp_err_t h_stream(httpd_req_t *req)
     return httpd_resp_sendstr(req, out);
 }
 
+/* Kamera-Einstellung setzen: "schluessel=wert", "reset=1" oder "af_trigger=1" */
+static esp_err_t h_kamera(httpd_req_t *req)
+{
+    char *body = read_body(req, 64);
+    char out[160];
+    bool ok = false;
+    const char *msg = "Ungueltige Anfrage";
+    char *eq = body ? strchr(body, '=') : NULL;
+    if (eq) {
+        *eq = 0;
+        const char *key = body, *val = eq + 1;
+        char *end;
+        long n = strtol(val, &end, 10);
+        if (!strcmp(key, "reset")) {
+            ok = cam_ctrl_reset() == ESP_OK;
+            msg = ok ? "Auf Standard zurueckgesetzt" : "Zuruecksetzen teilweise fehlgeschlagen";
+        } else if (!strcmp(key, "af_trigger")) {
+            ok = cam_ctrl_af_trigger() == ESP_OK;
+            msg = ok ? "Scharfstellen ausgeloest" : "Autofokus nicht verfuegbar";
+        } else if (end != val && *end == 0) {
+            int id = cam_ctrl_find(key);
+            esp_err_t err = id < 0 ? ESP_ERR_NOT_FOUND : cam_ctrl_set(id, (int)n);
+            ok = err == ESP_OK;
+            msg = ok ? "Uebernommen" :
+                  err == ESP_ERR_NOT_SUPPORTED ? "Vom Sensor nicht unterstuetzt" :
+                  err == ESP_ERR_INVALID_ARG ? "Wert ausserhalb des Bereichs" :
+                  err == ESP_ERR_NOT_FOUND ? "Unbekannte Einstellung" : "Sensor hat den Wert nicht angenommen";
+        }
+    }
+    free(body);
+    snprintf(out, sizeof(out), "{\"ok\":%s,\"msg\":\"%s\"}", ok ? "true" : "false", msg);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, out);
+}
+
+static esp_err_t h_kamera_status(httpd_req_t *req)
+{
+    char *out = malloc(1024);
+    if (!out) {
+        return httpd_resp_send_500(req);
+    }
+    cam_ctrl_json(out, 1024);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    free(out);
+    return ESP_OK;
+}
+
 static esp_err_t h_status(httpd_req_t *req)
 {
     char out[512];
@@ -863,6 +980,8 @@ esp_err_t web_ui_start(void)
         { .uri = "/save", .method = HTTP_POST, .handler = h_save },
         { .uri = "/licht", .method = HTTP_POST, .handler = h_licht },
         { .uri = "/stream", .method = HTTP_POST, .handler = h_stream },
+        { .uri = "/kamera", .method = HTTP_POST, .handler = h_kamera },
+        { .uri = "/api/kamera", .method = HTTP_GET, .handler = h_kamera_status },
         { .uri = "/api/status", .method = HTTP_GET, .handler = h_status },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

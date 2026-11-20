@@ -5,6 +5,11 @@ dependencies:
     version: "~2.6.0"
     rules:
       - if: "target == esp32p4"
+  # ESP32-P4: SCCB-Zugriff fuer die Kamera-Einstellungen (kommt ohnehin mit esp_video)
+  espressif/esp_sccb_intf:
+    version: "*"
+    rules:
+      - if: "target == esp32p4"
   # ESP32-P4: Hardware-H.264-Encoder
   espressif/esp_h264:
     version: "1.4.*"

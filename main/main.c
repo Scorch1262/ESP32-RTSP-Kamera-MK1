@@ -19,6 +19,7 @@
 #include "esp_system.h"
 #include "eth_init.h"
 #include "rtsp_server.h"
+#include "cam_ctrl.h"
 #include "video.h"
 #include "app_config.h"
 #include "ir_light.h"
@@ -304,6 +305,7 @@ void app_main(void)
             recorder_init(vi.width, vi.height, vi.codec);
             video_start();
             s_cam_ok = true;
+            cam_ctrl_init();
             ESP_LOGI(TAG, "Video: %s, %"PRIu32"x%"PRIu32, vi.desc, vi.width, vi.height);
         }
     }

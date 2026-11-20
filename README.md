@@ -1,6 +1,6 @@
 # P4-ETH-RTSP-Cam-MK1
 
-**Version 1.8.0**
+**Version 1.9.0**
 
 Firmware für **Waveshare ESP32-P4-ETH** und **Waveshare ESP32-S3-ETH**: Das Bild einer angeschlossenen **OV5640-Kamera** wird als **RTSP-Stream über die Ethernet-Schnittstelle** (RJ45, optional PoE) ins Netzwerk gesendet. Zusätzlich lässt sich eine **IR-Beleuchtung per MQTT ein- und ausschalten**, bei **Bewegung im Bild** werden Clips auf die **MicroSD-Karte** gespeichert (über die Webseite herunterladbar), und beim ESP32-S3 kann das **eingebaute WLAN** genutzt werden.
 
@@ -35,6 +35,7 @@ Der ESP32-S3 hat keinen H.264-Encoder. Deshalb liefert die Kamera dort fertige J
 - **Aufnahmen-Seite** zum Herunterladen und Löschen der Videos
 - **Dunkel-Meldung** und Bildhelligkeit per MQTT
 - **Stream ein/aus** per MQTT (`<Basis>/Stream`) oder Webseite – Aufnahmen laufen dabei weiter
+- **Kamera-Einstellungen** auf der Webseite (Helligkeit, Kontrast, Weißabgleich, Belichtung, Nachtmodus, Autofokus …) – angeboten wird nur, was der Sensor kann
 - **Bild drehen** in 90°-Schritten über die Webseite (Stream, Aufnahmen und Bewegungserkennung)
 - **WLAN (nur ESP32-S3)**: mit vorhandenem WLAN verbinden oder eigenen Access Point öffnen, parallel zum Ethernet
 - Uhrzeit per NTP (Dateinamen mit Datum/Uhrzeit), ohne Internet wird die Uhrzeit vom Browser übernommen
@@ -83,16 +84,16 @@ Im Release liegen Gesamt-Images (Bootloader + Partitionstabelle + App), die **an
 
 | Datei | Board |
 |---|---|
-| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32s3.bin` | ESP32-S3-ETH |
-| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
-| `P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32s3.bin` | ESP32-S3-ETH |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v3.bin` | ESP32-P4-ETH mit Chip v3.x |
+| `P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v1.bin` | ESP32-P4-ETH mit Chip v0.x / v1.x |
 
 **Im Browser (Chrome/Edge):** <https://espressif.github.io/esptool-js/> öffnen → *Connect* → Port des Boards wählen → Flash Address `0x0`, Datei wählen → *Program*. Beim P4 steht die Chip-Revision nach *Connect* im Log.
 
 **Per Kommandozeile:**
 ```bash
-esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32s3.bin
-esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.8.0-esp32p4-chip-rev-v3.bin
+esptool.py --chip esp32s3 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32s3.bin
+esptool.py --chip esp32p4 -b 460800 write_flash 0x0 P4-ETH-RTSP-Cam-MK1-v1.9.0-esp32p4-chip-rev-v3.bin
 ```
 
 > Falls der ESP32-S3 nicht in den Flash-Modus geht: BOOT-Taste gedrückt halten, kurz RESET drücken, BOOT loslassen.
@@ -126,6 +127,22 @@ Auf der Webseite unter **Einstellungen → Videobild** lässt sich das Bild in 9
 |---|---|---|
 | ESP32-P4-ETH | verlustfrei per Grafikbaustein (PPA) | verlustfrei per PPA, Stream im Hochformat 720×1280 |
 | ESP32-S3-ETH | verlustfrei im Kamerasensor (Spiegeln + Kippen) | per Software: Bild wird neu kodiert, max. 640×480 (Hochformat 480×640), ca. 8 Bilder/s |
+
+## Kamera-Einstellungen
+
+Die Webseite zeigt die Karte **Kamera-Einstellungen** mit allen Reglern, die der angeschlossene Sensor unterstützt. Änderungen wirken sofort (ohne Neustart), werden gespeichert und beim Start wieder gesetzt. **Alle auf Standard** stellt den Zustand nach dem Kamerastart wieder her. Diese Einstellungen gibt es nur auf der Webseite, nicht per MQTT.
+
+| Gruppe | Regler |
+|---|---|
+| Bild | Helligkeit, Kontrast, Farbsättigung, Schärfe, Rauschunterdrückung, Effekt (Graustufen, Sepia, Negativ …) |
+| Weißabgleich | automatisch ein/aus, Modus (Sonnig, Bewölkt, Büro, Zuhause) |
+| Belichtung | automatische Belichtung/Verstärkung ein/aus, Belichtungskorrektur, manuelle Belichtungszeit und Verstärkung, Nachtmodus |
+| Korrekturen | Objektiv-Korrektur, Pixelfehler-Korrektur, Gamma, Testbild |
+| Fokus (nur OV5640) | Autofokus aus (Unendlich) / dauerhaft / einmalig, Knopf „Jetzt scharfstellen“, Statusanzeige |
+
+- **ESP32-S3:** über den Kameratreiber esp32-camera; bei einem OV2640 erscheinen nur dessen Regler.
+- **ESP32-P4:** direkte Registerzugriffe auf den OV5640 (der P4-Kameratreiber bietet selbst keine Bildregler).
+- **Autofokus:** funktioniert nur mit OV5640-Modulen, die einen Fokusmotor haben. Beim ersten Einschalten wird die AF-Firmware (aus espressif/esp32-camera, Apache 2.0) in den Sensor geladen; das dauert einige Sekunden.
 
 ## WLAN (nur ESP32-S3-ETH)
 
@@ -237,7 +254,7 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 
 ## Webseite
 
-`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT, WLAN, Uhrzeit, MicroSD, letzte Bewegung, Aufnahme), Ein/Aus-Schalter für den Videostream und die IR-Beleuchtung, die Aufnahmen und alle Einstellungen.
+`http://<IP>/` zeigt Status (IP, RTSP-URL, Clients, MQTT, WLAN, Uhrzeit, MicroSD, letzte Bewegung, Aufnahme), Ein/Aus-Schalter für den Videostream und die IR-Beleuchtung, die Kamera-Einstellungen, die Aufnahmen und alle Einstellungen.
 
 | Adresse | Funktion |
 |---|---|
@@ -249,6 +266,8 @@ Der Standard-GPIO ist nur ein Vorschlag – auf der Webseite lässt sich jeder f
 | `POST /sd-alles-loeschen` | Karte leeren (Inhalt muss `LOESCHEN` sein) |
 | `POST /licht` | IR-Beleuchtung `1`/`0` |
 | `POST /stream` | RTSP-Stream `1`/`0` (auch `toggle`) |
+| `POST /kamera` | Kamera-Einstellung setzen, z. B. `brightness=1`, `af=1`, `af_trigger=1`, `reset=1` |
+| `GET /api/kamera` | Sensor, Autofokus-Status und alle Kamera-Werte als JSON |
 | `GET /api/status` | Status als JSON | Die Seite hat keinen Passwortschutz – nur im eigenen Netz betreiben.
 
 ## Selbst bauen
@@ -329,6 +348,10 @@ main/
   video_p4.c      P4: Kamera -> H.264-Hardware-Encoder -> RTSP
   camera.c        P4: OV5640 via esp_video (V4L2), YUV420-Ausgabe (direkt oder per PPA)
   video_s3.c      S3: OV5640/OV2640 via esp32-camera, JPEG -> RTSP
+  cam_ctrl.c      Kamera-Einstellungen: Reglerliste, Speichern, Autofokus
+  cam_ctrl_p4.c   P4: OV5640-Register per SCCB
+  cam_ctrl_s3.c   S3: Sensorfunktionen von esp32-camera
+  ov5640_af_fw.h  OV5640-Autofokus-Firmware (esp32-camera, Apache 2.0)
   rtsp_server.c   RTSP-Server, RTP-Paketierung H.264 (RFC 6184) und MJPEG (RFC 2435)
   ir_light.c      Schaltausgang der IR-Beleuchtung
   status_led.c    WS2812-Status-LED (S3: GPIO21)
